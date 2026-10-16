@@ -16,6 +16,8 @@ export interface PrMeta {
   url: string;
   baseRef: string;
   headRef: string;
+  /** `owner/repo` of the head branch when it lives in a fork; absent in older cached results. */
+  headRepo?: string;
   commits: number;
   viewerDidAuthor?: boolean;
   /** The commit you last approved at, if your latest review is an approval. */
@@ -38,7 +40,7 @@ export interface PrResult {
 // ---------------------------------------------------------------- auth
 
 let tokenPromise: Promise<string> | undefined;
-function token(): Promise<string> {
+export function token(): Promise<string> {
   tokenPromise ??= (async () => {
     const p = Bun.spawn(['gh', 'auth', 'token'], { stdout: 'pipe', stderr: 'pipe' });
     const out = (await new Response(p.stdout).text()).trim();
@@ -200,6 +202,7 @@ interface GqlPull {
   url: string;
   baseRefName: string;
   headRefName: string;
+  headRepository: { nameWithOwner: string } | null;
   author: { login: string } | null;
   commits: { totalCount: number };
   viewerDidAuthor: boolean;
@@ -208,7 +211,7 @@ interface GqlPull {
 
 // GraphQL answers in ~0.4 s where REST `pulls/N` takes ~0.75 s.
 async function fetchPull(owner: string, repo: string, n: number): Promise<GqlPull> {
-  const query = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){title state isDraft url baseRefName headRefName author{login} commits{totalCount} viewerDidAuthor viewerLatestReview{state commit{oid}}}}}`;
+  const query = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){title state isDraft url baseRefName headRefName headRepository{nameWithOwner} author{login} commits{totalCount} viewerDidAuthor viewerLatestReview{state commit{oid}}}}}`;
   const res = await fetch('https://api.github.com/graphql', {
     method: 'POST',
     headers: { Authorization: `Bearer ${await token()}`, 'content-type': 'application/json' },
@@ -354,6 +357,7 @@ async function doLoadPr(owner: string, repo: string, n: number): Promise<PrResul
     url: api.url,
     baseRef: api.baseRefName,
     headRef: api.headRefName,
+    ...(api.headRepository && api.headRepository.nameWithOwner.toLowerCase() !== `${owner}/${repo}`.toLowerCase() ? { headRepo: api.headRepository.nameWithOwner } : {}),
     commits: api.commits.totalCount,
     viewerDidAuthor: api.viewerDidAuthor,
     approvedSha: api.viewerLatestReview?.state === 'APPROVED' ? api.viewerLatestReview.commit?.oid : undefined,

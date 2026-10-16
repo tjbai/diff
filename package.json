@@ -23,6 +23,10 @@
   },
   "dependencies": {
     "@pierre/diffs": "^1.5.2",
+    "dompurify": "^3.4.17",
+    "github-markdown-css": "^5.9.0",
+    "github-slugger": "^2.0.0",
+    "marked": "^18.1.1",
     "shiki": "4.5.0"
   }
 }

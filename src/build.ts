@@ -3,7 +3,6 @@
 // inline both. Grammars are not bundled; the server (or the export) supplies
 // the ones a PR uses.
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ICONS } from './client/icons.ts';
 
@@ -30,9 +29,16 @@ function iconCss(): string {
     .join('\n');
 }
 
+/** The stylesheet is inlined into every page, so it ships minified. */
+export async function buildCss(file: string): Promise<string> {
+  const res = await Bun.build({ entrypoints: [join(ROOT, file)], target: 'browser', minify: true });
+  if (!res.success) throw new AggregateError(res.logs, `build of ${file} failed`);
+  return (await res.outputs[0]!.text()).trim();
+}
+
 export async function buildClient(): Promise<ClientBuild> {
-  const [js, worker] = await Promise.all([bundle('src/client/app.ts', 'esm'), bundle('src/client/hl-worker.ts', 'iife')]);
-  const css = readFileSync(join(ROOT, 'src/client/style.css'), 'utf8') + iconCss();
+  const [js, worker, style] = await Promise.all([bundle('src/client/app.ts', 'esm'), bundle('src/client/hl-worker.ts', 'iife'), buildCss('src/client/style.css')]);
+  const css = style + iconCss();
   const hash = createHash('sha1').update(js).update(worker).update(css).digest('hex').slice(0, 10);
   return { js, css, worker, hash };
 }

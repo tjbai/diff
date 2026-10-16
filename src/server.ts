@@ -89,6 +89,8 @@ function logTiming(entry: Record<string, unknown>) {
   } catch {}
 }
 
+let repositoryRoutes: Promise<typeof import('./repository-routes.ts')> | undefined;
+
 const PR_PAGE = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?(?:files)?\/?$/;
 const PR_API = /^\/api\/pr\/([^/]+)\/([^/]+)\/(\d+)$/;
 
@@ -106,7 +108,11 @@ async function route(req: Request, url: URL): Promise<Response> {
       'content-security-policy': "frame-ancestors 'none'",
     });
   }
-  if (path === '/') return text(indexPage({ css: client.css, hash: client.hash }), 'text/html; charset=utf-8');
+  if (path === '/') {
+    const home = process.env.PRV_REPO;
+    if (home) return new Response(null, { status: 302, headers: { location: `/${home}/pulls` } });
+    return text(indexPage({ css: client.css, hash: client.hash }), 'text/html; charset=utf-8');
+  }
   if (path === '/app.js') {
     return text(client.js, 'text/javascript; charset=utf-8', { 'cache-control': 'public, max-age=31536000, immutable' });
   }
@@ -173,6 +179,8 @@ async function route(req: Request, url: URL): Promise<Response> {
   if (path === '/api/rebuild' && req.method === 'POST') {
     client = await buildClient();
     workerB64 = undefined;
+    // Failure to load an optional feature must not break rebuilding the PR app.
+    if (repositoryRoutes) await repositoryRoutes.then((routes) => routes.resetBuilds(), () => {});
     return json({ hash: client.hash });
   }
 
@@ -181,6 +189,14 @@ async function route(req: Request, url: URL): Promise<Response> {
     return json({ ok: true });
   }
 
+  // No repository imports, builds, or route checks on the original PR paths.
+  if (path.startsWith('/api/repo/') || path === '/api/markdown-assets'
+    || /^\/(?:repo|pulls|markdown)\.(?:js|css)$/.test(path)
+    || /^\/(?!api\/)[\w.-]+\/[\w.-]+(?:\/?$|\/(?:tree|blob|pulls)(?:\/|$))/.test(path)) {
+    const extra = await (repositoryRoutes ??= import('./repository-routes.ts'));
+    const response = await extra.routeRepository(req, url, client);
+    if (response) return response;
+  }
   return new Response('not found', { status: 404 });
 }
 

@@ -5,6 +5,7 @@
 !.gitignore
 !README.md
 !LICENSE
+!THIRD_PARTY_NOTICES
 !package.json
 !bun.lock
 !tsconfig.json

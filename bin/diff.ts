@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // diff <github PR url | owner/repo#N> — open a fast local "Files changed" view.
-import { mkdirSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { CACHE_ROOT } from '../src/github.ts';
 import { sourceVersion } from '../src/version.ts';
@@ -11,7 +12,8 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const SERVER = join(import.meta.dir, '..', 'src', 'server.ts');
 const LOG = join(CACHE_ROOT, 'server.log');
 
-const USAGE = `usage: diff <https://github.com/owner/repo/pull/N | owner/repo#N> [--no-open]
+const USAGE = `usage: diff            open the start page
+       diff <https://github.com/owner/repo/pull/N | owner/repo#N> [--no-open]
        diff --stop      stop the background server
        diff --restart   restart the background server`;
 
@@ -43,10 +45,15 @@ async function ensureServer(): Promise<string> {
   if (h?.version === want) return 'reused';
   if (h) await stop();
   mkdirSync(CACHE_ROOT, { recursive: true });
-  // nohup + background so the server outlives this process and the terminal.
-  Bun.spawn(['/bin/sh', '-c', `nohup "${process.execPath}" "${SERVER}" >> "${LOG}" 2>&1 &`], {
-    stdio: ['ignore', 'ignore', 'ignore'],
-  });
+  // Give the daemon its own session so it survives the launcher and terminal.
+  const log = openSync(LOG, 'a', 0o600);
+  try {
+    const child = spawn(process.execPath, [SERVER], { detached: true, stdio: ['ignore', log, log] });
+    child.on('error', (e) => console.error(`diff: ${e.message}`));
+    child.unref();
+  } finally {
+    closeSync(log);
+  }
   for (let i = 0; i < 500; i++) {
     await Bun.sleep(10);
     if ((await health())?.version === want) return h ? 'restarted' : 'started';
@@ -63,6 +70,12 @@ async function main() {
     return;
   }
   const target = args.find((a) => !a.startsWith('--'));
+  if (!target && args.every((a) => a === '--no-open' || a === '--color')) {
+    const server = await ensureServer();
+    if (!args.includes('--no-open')) Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', BASE], { stdio: ['ignore', 'ignore', 'ignore'] });
+    console.log(`diff: ${BASE} (server ${server})`);
+    return;
+  }
   const pr = target ? parse(target) : null;
   if (!pr) {
     console.error(USAGE);

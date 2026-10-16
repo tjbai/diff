@@ -116,7 +116,7 @@ a { color: var(--fg-accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 button { font: inherit; }
 code, kbd { font-family: var(--fontStack-monospace); }
-.octicon { display: inline-block; flex: none; width: 16px; height: 16px; vertical-align: text-bottom; background: currentColor; mask: var(--icon) center / 100% 100% no-repeat; }
+.octicon { display: inline-block; flex: none; width: 16px; height: 16px; vertical-align: text-bottom; background: currentColor; mask-image: var(--icon); mask-size: 100% 100%; mask-repeat: no-repeat; }
 .color-fg-success { color: var(--fg-success); }
 .color-fg-danger { color: var(--fg-danger); }
 .Link--primary { color: var(--fg) !important; }
@@ -126,30 +126,57 @@ code, kbd { font-family: var(--fontStack-monospace); }
 .flash-container:empty { display: none; }
 
 
+/* ---------------------------------------------------------------- repository chrome
+   GitHub's logged-out repository header: owner / repo, then the UnderlineNav. */
+.repohead { padding-top: 16px; background: var(--bg-muted); border-bottom: 1px solid var(--border); }
+.repohead-title { display: flex; align-items: center; gap: 8px; padding: 0 32px 16px; font-size: 20px; line-height: 28px; overflow-wrap: anywhere; }
+.repohead-title > span { color: var(--fg-muted); }
+.repohead-title a { color: var(--fg); }
+.UnderlineNav { display: flex; gap: 8px; padding: 0 24px; }
+.UnderlineNav-item { position: relative; isolation: isolate; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px; color: var(--fg); }
+.UnderlineNav-item::before { position: absolute; inset: 8px 0; z-index: -1; content: ""; border-radius: 6px; }
+.UnderlineNav-item:hover { text-decoration: none; }
+.UnderlineNav-item:hover::before { background: var(--row-hover); transition: background .12s ease-out; }
+.UnderlineNav-item .octicon { color: var(--fg-muted); }
+.UnderlineNav-item[aria-current] { font-weight: 600; }
+.UnderlineNav-item[aria-current]::after { position: absolute; right: 0; bottom: -1px; left: 0; z-index: 1; height: 2px; content: ""; background: #fd8c73; border-radius: 6px; }
+.Counter { display: inline-block; min-width: 20px; padding: 0 6px; font-size: 12px; font-weight: 500; line-height: 18px; color: var(--fg); text-align: center; background: var(--bg-neutral-muted); border-radius: 2em; }
+.pr-top .repohead { margin-bottom: 24px; }
+
 /* ---------------------------------------------------------------- PR header
-   Sticky, two rows like GitHub's PR header: the full title, then state, branch
-   line, and controls on one centered line. */
-.pr-header { position: sticky; top: 0; z-index: 40; padding: 16px; background: var(--bg); border-bottom: 1px solid var(--border); }
-/* Cover the sub-pixel gap a sticky header can leave above itself at fractional zoom. */
-.pr-header::before { position: absolute; right: 0; bottom: 100%; left: 0; height: 8px; content: ""; background: var(--bg); }
-.pr-title-line { margin: 0 0 8px; font-size: 20px; font-weight: 400; line-height: 28px; overflow-wrap: anywhere; }
-.pr-title { font-weight: 600; color: var(--fg); }
+   GitHub's gh-header: title, state line, the Files changed tab. The toolbar
+   below is the only sticky part; the title moves into it once this scrolls away. */
+.gh-header { padding: 0 32px; }
+.gh-header-title { margin: 0 0 8px; font-size: 32px; font-weight: 400; line-height: 1.25; overflow-wrap: anywhere; }
 .pr-title code { padding: .1em .3em; font-size: 85%; border-radius: 6px; background: var(--bg-neutral-muted); }
 .pr-number { font-weight: 300; color: var(--fg-muted); }
-.pr-meta-row { display: flex; align-items: center; gap: 16px; min-height: 32px; }
-.pr-meta { display: flex; flex: 1 1 auto; align-items: center; gap: 4px; min-width: 0; font-size: 14px; line-height: 20px; color: var(--fg-muted); white-space: nowrap; }
-.pr-meta .State { margin-right: 4px; }
-.pr-meta .author { color: var(--fg); font-weight: 600; }
-.commit-ref { display: inline-block; flex: none; padding: 0 4px; font-family: var(--fontStack-monospace); font-size: 12px; line-height: 20px; color: var(--fg-accent); white-space: nowrap; background: var(--bg-accent-muted); border-radius: 6px; }
-/* Only the head branch gives way, and only when the row truly runs out of room. */
-.commit-ref.head-ref { flex: 0 1 auto; min-width: 6ch; overflow: hidden; text-overflow: ellipsis; }
-.pr-meta .snapshot { flex: none; margin-left: 4px; }
-.pr-header-actions { display: flex; flex: none; align-items: center; gap: 8px; }
+.gh-header-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; font-size: 14px; line-height: 20px; color: var(--fg-muted); }
+.pr-meta-text { min-width: 0; overflow-wrap: anywhere; }
+.pr-meta-text .author { color: var(--fg); font-weight: 600; }
+.commit-ref { display: inline-block; max-width: 100%; padding: 0 4px; font-family: var(--fontStack-monospace); font-size: 12px; line-height: 20px; color: var(--fg-accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; background: var(--bg-accent-muted); border-radius: 6px; }
+.snapshot { margin-left: 4px; }
+.tabnav { display: flex; align-items: flex-end; gap: 16px; margin: 0 32px; border-bottom: 1px solid var(--border); }
+.tabnav-tabs { display: flex; margin-bottom: -1px; }
+.tabnav-tab { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; font-size: 14px; line-height: 23px; color: var(--fg-muted); white-space: nowrap; border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; }
+.tabnav-tab .octicon { color: var(--fg-muted); }
+.tabnav-tab[aria-current] { color: var(--fg); background: var(--bg); border-color: var(--border); }
+.pr-tabnav-stat { margin-left: auto; padding-bottom: 8px; }
+.pr-header-sentinel { height: 1px; margin-top: -1px; }
+.pr-header { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 16px; min-height: 48px; padding: 8px 32px; background: var(--bg); border-bottom: 1px solid var(--border); }
+/* Cover the sub-pixel gap a sticky header can leave above itself at fractional zoom. */
+.pr-header::before { position: absolute; right: 0; bottom: 100%; left: 0; height: 8px; content: ""; background: var(--bg); }
+.pr-sticky-title { display: none; align-items: center; gap: 8px; min-width: 0; font-size: 14px; line-height: 20px; }
+.pr-header.is-stuck .pr-sticky-title { display: flex; }
+.pr-sticky-title .State { padding: 0 8px; font-size: 12px; }
+.pr-sticky-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-sticky-text .pr-title { font-weight: 600; }
+.pr-toolbar { display: flex; flex: 1; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.pr-toolbar .btn-icon { width: auto; padding: 0 8px; }
 /* Diffstat of the files that are not hidden; hover or focus shows a Primer
    overlay with all-file totals and the hidden breakdown. */
-.pr-diffstat { position: relative; display: flex; align-items: center; gap: 8px; margin-right: 4px; font-size: 14px; line-height: 20px; white-space: nowrap; cursor: default; outline: none; }
+.pr-diffstat { position: relative; display: flex; align-items: center; gap: 8px; font-size: 14px; line-height: 20px; white-space: nowrap; cursor: default; outline: none; }
 .pr-diffstat .diffstat { font-family: var(--fontStack-sansSerif); font-size: 12px; }
-.diffstat-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 99; display: none; min-width: 300px; padding: 8px 0; font-size: 12px; font-weight: 400; line-height: 20px; color: var(--fg); background: var(--bg); border-radius: 12px; box-shadow: var(--overlay-shadow); }
+.diffstat-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 99; text-align: left; display: none; min-width: 300px; padding: 8px 0; font-size: 12px; font-weight: 400; line-height: 20px; color: var(--fg); background: var(--bg); border-radius: 12px; box-shadow: var(--overlay-shadow); }
 .pr-diffstat:hover .diffstat-popover, .pr-diffstat:focus-visible .diffstat-popover { display: block; }
 .ds-row { display: grid; grid-template-columns: 1fr auto auto; gap: 16px; padding: 2px 16px; }
 .ds-sub .ds-label { padding-left: 12px; color: var(--fg-muted); }

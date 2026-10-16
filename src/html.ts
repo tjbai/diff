@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 // Inlined so exports carry the favicon too.
 const FAVICON = `data:image/svg+xml,${encodeURIComponent(readFileSync(new URL('logo.svg', import.meta.url), 'utf8').trim())}`;
 
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+export const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // Inline scripts must not contain `</script` or `<!--`; both escapes are
 // no-ops inside JS strings, regexes, and template literals.
@@ -19,9 +19,11 @@ interface ShellOptions {
   /** Extra markup at the end of <body> (the app script, embedded data). */
   body: string;
   head?: string;
+  /** Static markup inside #app, painted before any script runs. */
+  app?: string;
 }
 
-function shell(o: ShellOptions): string {
+export function shell(o: ShellOptions): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -34,7 +36,7 @@ function shell(o: ShellOptions): string {
 ${o.head ?? ''}<style>${o.css}</style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app">${o.app ?? ''}</div>
 ${o.body}
 </body>
 </html>`;

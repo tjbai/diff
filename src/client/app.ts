@@ -17,6 +17,7 @@ import {
 } from './diff.ts';
 import { extractEmbedded, fmt, gunzipBase64, h } from './dom.ts';
 import { Highlighter, type Grammar } from './highlight.ts';
+import type { IconName } from './icons.ts';
 import { FileTree } from './tree.ts';
 
 type Boot =
@@ -327,6 +328,9 @@ class App {
   current = -1;
   el = {
     root: h('div', { class: 'prv' }),
+    /** Repository chrome, title, and tabs; scrolls away. */
+    top: h('div', { class: 'pr-top' }),
+    /** The toolbar; sticks, and shows the title once the top has scrolled away. */
     header: h('header', { class: 'pr-header' }),
     flash: h('div', { class: 'flash-container' }),
     layout: h('div', { class: 'diff-layout' }),
@@ -845,14 +849,16 @@ class App {
   /** The header's right side: diffstat, the gear (view, export), and
    *  Approve. It follows the hide state, so it repaints on its own. */
   renderHeaderStats() {
-    const slot = this.el.header.querySelector<HTMLElement>('.pr-header-actions');
-    if (!slot) return;
+    const stat = this.el.top.querySelector<HTMLElement>('.pr-tabnav-stat');
+    const toolbar = this.el.header.querySelector<HTMLElement>('.pr-toolbar');
+    if (!stat || !toolbar) return;
+    stat.innerHTML = this.diffstatHtml();
+    this.el.top.querySelector('.tabnav-tab .Counter')!.textContent = fmt(this.visible.length);
     const radio = (v: DiffStyle, label: string) =>
       `<button type="button" class="ActionListItem" role="menuitemradio" aria-checked="${this.diffStyle === v}" data-style="${v}"><span class="check">${this.diffStyle === v ? icon('check') : ''}</span>${label}</button>`;
     this.paintKeepingMenus(
-      slot,
-      this.diffstatHtml() +
-        `<details class="details-reset details-overlay select-menu" data-menu="view"><summary class="btn btn-sm btn-icon" aria-label="Settings" title="Settings">${icon('gear')}</summary><div class="select-menu-modal right settings-menu"><div class="ActionList">` +
+      toolbar,
+      `<details class="details-reset details-overlay select-menu" data-menu="view"><summary class="btn btn-sm btn-icon" aria-label="Settings" title="Settings">${icon('gear')}<span class="dropdown-caret"></span></summary><div class="select-menu-modal settings-menu"><div class="ActionList">` +
         `<div class="menu-heading">View</div>${radio('unified', 'Unified')}${radio('split', 'Split')}` +
         (this.live ? `<div class="ActionList-sectionDivider" role="presentation"></div><button type="button" class="ActionListItem" data-act="export"><span class="check">${icon('download')}</span>Export .html</button>` : '') +
         `</div></div></details>` +
@@ -862,20 +868,35 @@ class App {
 
   renderHeader() {
     const { meta } = this.m;
-    const repo = `https://github.com/${esc(meta.owner)}/${esc(meta.repo)}`;
     const verb = meta.state === 'merged' ? 'merged' : 'wants to merge';
     const exportedAt = this.live ? null : new Date(this.src.bundle!.exportedAt);
     const snapshot = exportedAt
       ? `<span class="snapshot" title="Exported from diff ${esc(exportedAt.toLocaleString())}">· snapshot ${esc(exportedAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</span>`
       : '';
+    // An export has no server, so its repository links go to github.com.
+    const site = this.live ? '' : 'https://github.com';
+    const ext = this.live ? '' : ' target="_blank" rel="noreferrer"';
+    const base = `${site}/${esc(meta.owner)}/${esc(meta.repo)}`;
+    const tab = (href: string, name: IconName, label: string, selected: boolean) =>
+      `<a class="UnderlineNav-item" href="${href}"${ext}${selected ? ' aria-current="page"' : ''}>${icon(name)}${label}</a>`;
+    // Fork PRs label both sides `owner:branch`, as GitHub does.
+    const headOwner = meta.headRepo?.split('/')[0];
+    const ref = (cls: string, repo: string, name: string, owner?: string) =>
+      `<a class="commit-ref ${cls}" href="${site}/${esc(repo)}/tree/${esc(name)}"${ext}>${esc(owner ? `${owner}:${name}` : name)}</a>`;
+    const title = `<bdi class="pr-title">${titleHtml(meta.title)}</bdi> <span class="pr-number">#${meta.number}</span>`;
+    this.el.top.innerHTML =
+      `<div class="repohead"><div class="repohead-title"><a href="${base}"${ext}>${esc(meta.owner)}</a><span>/</span><a href="${base}"${ext}><strong>${esc(meta.repo)}</strong></a></div>` +
+      `<nav class="UnderlineNav" aria-label="Repository">${tab(base, 'code', 'Code', false)}${tab(`${base}/pulls`, 'git-pull-request', 'Pull requests', true)}</nav></div>` +
+      `<div class="gh-header"><h1 class="gh-header-title">${title}</h1>` +
+      `<div class="gh-header-meta">${this.stateBadge()}<span class="pr-meta-text">` +
+      `<a class="author" href="https://github.com/${esc(meta.author)}" target="_blank" rel="noreferrer">${esc(meta.author)}</a> ${verb} ${fmt(meta.commits)} commit${meta.commits === 1 ? '' : 's'} into ` +
+      ref('base-ref', `${meta.owner}/${meta.repo}`, meta.baseRef, headOwner && meta.owner) + ' from ' +
+      ref('head-ref', meta.headRepo ?? `${meta.owner}/${meta.repo}`, meta.headRef, headOwner) +
+      `${snapshot}</span></div></div>` +
+      `<div class="tabnav"><nav class="tabnav-tabs" aria-label="Pull request"><span class="tabnav-tab" aria-current="page">${icon('file-diff')}Files changed<span class="Counter"></span></span></nav><div class="pr-tabnav-stat"></div></div>`;
     this.paintKeepingMenus(
       this.el.header,
-      `<h1 class="pr-title-line"><bdi class="pr-title">${titleHtml(meta.title)}</bdi> <span class="pr-number">#${meta.number}</span></h1>` +
-        `<div class="pr-meta-row"><div class="pr-meta">${this.stateBadge()}` +
-        `<a class="author" href="https://github.com/${esc(meta.author)}" target="_blank" rel="noreferrer">${esc(meta.author)}</a><span>${verb} ${fmt(meta.commits)} commit${meta.commits === 1 ? '' : 's'} into</span>` +
-        `<a class="commit-ref base-ref" href="${repo}/tree/${esc(meta.baseRef)}" target="_blank" rel="noreferrer" title="${esc(meta.baseRef)}">${esc(meta.baseRef)}</a><span>from</span>` +
-        `<a class="commit-ref head-ref" href="${repo}/tree/${esc(meta.headRef)}" target="_blank" rel="noreferrer" title="${esc(meta.headRef)}">${esc(meta.headRef)}</a>${snapshot}</div>` +
-        `<div class="pr-header-actions"></div></div>`,
+      `<div class="pr-sticky-title">${this.stateBadge()}<span class="pr-sticky-text">${title}</span></div><div class="pr-toolbar"></div>`,
     );
     this.renderHeaderStats();
     document.title = `${meta.title} by ${meta.author} · Pull Request #${meta.number} · ${meta.owner}/${meta.repo}`;
@@ -995,7 +1016,10 @@ class App {
     const main = h('div', { class: 'diff-view' }, h('div', { class: 'land-mask' }), this.el.flash, this.el.list);
     this.el.sidebar.append(this.tree.el);
     this.el.layout.append(this.el.sidebar, main);
-    this.el.root.append(this.el.header, this.el.layout);
+    // The toolbar shows the title only once the title block has scrolled away.
+    const sentinel = h('div', { class: 'pr-header-sentinel' });
+    this.el.root.append(this.el.top, sentinel, this.el.header, this.el.layout);
+    new IntersectionObserver(([e]) => this.el.header.classList.toggle('is-stuck', !e!.isIntersecting)).observe(sentinel);
     this.el.root.dataset.diffStyle = this.diffStyle;
     container.replaceChildren(this.el.root);
     this.renderHeader();
