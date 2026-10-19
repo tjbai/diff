@@ -16,6 +16,8 @@ export interface PrMeta {
   url: string;
   baseRef: string;
   headRef: string;
+  /** The head branch lives in a fork. Unset on pointers written before this existed. */
+  crossRepo?: boolean;
   commits: number;
   viewerDidAuthor?: boolean;
   /** The commit you last approved at, if your latest review is an approval. */
@@ -200,6 +202,7 @@ interface GqlPull {
   url: string;
   baseRefName: string;
   headRefName: string;
+  isCrossRepository: boolean;
   author: { login: string } | null;
   commits: { totalCount: number };
   viewerDidAuthor: boolean;
@@ -208,7 +211,7 @@ interface GqlPull {
 
 // GraphQL answers in ~0.4 s where REST `pulls/N` takes ~0.75 s.
 async function fetchPull(owner: string, repo: string, n: number): Promise<GqlPull> {
-  const query = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){title state isDraft url baseRefName headRefName author{login} commits{totalCount} viewerDidAuthor viewerLatestReview{state commit{oid}}}}}`;
+  const query = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){title state isDraft url baseRefName headRefName isCrossRepository author{login} commits{totalCount} viewerDidAuthor viewerLatestReview{state commit{oid}}}}}`;
   const res = await fetch('https://api.github.com/graphql', {
     method: 'POST',
     headers: { Authorization: `Bearer ${await token()}`, 'content-type': 'application/json' },
@@ -319,24 +322,38 @@ async function doLoadPr(owner: string, repo: string, n: number): Promise<PrResul
   // While the API call is in flight: fetch the PR head and the base branch we
   // saw last time (or the repo's default branch), then speculatively diff
   // against it. The speculation is kept only if the API confirms the base.
+  //
+  // The head comes from the branch itself when it's an open PR in this repo:
+  // GitHub moves `refs/pull/N/head` asynchronously, often 20+ s after a push,
+  // so fetching it right after a push silently returns the old head. Forks and
+  // closed PRs (whose branch may be deleted or reused) use the pull ref.
+  const pullSpec = `+refs/pull/${n}/head:${headRef(n)}`;
+  const headSpec = (branch: string | null) => (branch ? `+refs/heads/${branch}:${headRef(n)}` : pullSpec);
+  const liveBranch = (m: { state: string; crossRepo?: boolean; headRef: string }) =>
+    m.crossRepo === false && (m.state === 'open' || m.state === 'draft') ? m.headRef : null;
+  const guessedHead = headSpec(prior ? liveBranch(prior.meta) : null);
   const guessedBase = prior?.meta.baseRef ?? (await defaultBranch(dir));
-  const refspecs = [`+refs/pull/${n}/head:${headRef(n)}`];
-  if (guessedBase) refspecs.push(`+refs/heads/${guessedBase}:${baseRefName(guessedBase)}`);
-  const fetchP = git(dir, ['fetch', '--no-tags', '-q', 'origin', ...refspecs]).then(() => mark('fetch'));
+  const baseSpec = (base: string) => `+refs/heads/${base}:${baseRefName(base)}`;
+  const fetchP = git(dir, ['fetch', '--no-tags', '-q', 'origin', guessedHead, ...(guessedBase ? [baseSpec(guessedBase)] : [])]).then(() => mark('fetch'));
   const specP = guessedBase ? fetchP.then(() => diffAgainst(owner, repo, dir, n, guessedBase, mark)) : null;
   specP?.catch(() => {});
 
   const api = await apiP;
+  const state = api.state === 'MERGED' ? 'merged' : api.state === 'CLOSED' ? 'closed' : api.isDraft ? 'draft' : 'open';
+  const realHead = headSpec(liveBranch({ state, crossRepo: api.isCrossRepository, headRef: api.headRefName }));
+  const spec = specP && api.baseRefName === guessedBase && realHead === guessedHead ? await specP.catch(() => null) : null;
   let d: Awaited<ReturnType<typeof diffAgainst>>;
-  if (specP && api.baseRefName === guessedBase) {
-    d = await specP;
+  if (spec) {
+    d = spec;
   } else {
-    // The guessed base may be gone (a stacked PR's base branch deleted after
-    // merge), which fails the whole speculative fetch, head included. Refetch
-    // the head with the real base; it's a no-op if the first fetch got it.
+    // The guess was wrong, or its fetch failed (e.g. a stacked PR's base
+    // branch deleted after merge fails the whole fetch, head included).
+    // Refetch with the real refs, falling back to the pull ref if the head
+    // branch is gone.
     await (specP ?? fetchP).catch(() => {});
     const t = performance.now();
-    await git(dir, ['fetch', '--no-tags', '-q', 'origin', refspecs[0]!, `+refs/heads/${api.baseRefName}:${baseRefName(api.baseRefName)}`]);
+    const fetchReal = (head: string) => git(dir, ['fetch', '--no-tags', '-q', 'origin', head, baseSpec(api.baseRefName)]);
+    await fetchReal(realHead).catch((e) => (realHead === pullSpec ? Promise.reject(e) : fetchReal(pullSpec)));
     mark('fetchBase', t);
     d = await diffAgainst(owner, repo, dir, n, api.baseRefName, mark);
   }
@@ -349,11 +366,12 @@ async function doLoadPr(owner: string, repo: string, n: number): Promise<PrResul
     repo,
     number: n,
     title: api.title,
-    state: api.state === 'MERGED' ? 'merged' : api.state === 'CLOSED' ? 'closed' : api.isDraft ? 'draft' : 'open',
+    state,
     author: api.author?.login ?? 'ghost',
     url: api.url,
     baseRef: api.baseRefName,
     headRef: api.headRefName,
+    crossRepo: api.isCrossRepository,
     commits: api.commits.totalCount,
     viewerDidAuthor: api.viewerDidAuthor,
     approvedSha: api.viewerLatestReview?.state === 'APPROVED' ? api.viewerLatestReview.commit?.oid : undefined,
