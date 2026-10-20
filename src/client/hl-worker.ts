@@ -25,7 +25,9 @@ const hlP = createHighlighterCore({
 // grammar is still being fetched waits for it.
 const loading = new Map<string, Promise<void>>();
 
-self.onmessage = async (e: MessageEvent<Req>) => {
+self.onmessage = async (e: MessageEvent<Req | { ping: true }>) => {
+  // The pool's liveness check: proves this script loaded and ran.
+  if ('ping' in e.data) return postMessage({ pong: true });
   const { id, lang, grammar, docs } = e.data;
   try {
     const hl = await hlP;

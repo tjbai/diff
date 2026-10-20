@@ -182,9 +182,15 @@ async function interaction(page: Page, names: string[], act: () => Promise<void>
 
 // ------------------------------------------------------------ one run
 
-async function run(browser: Browser): Promise<Metrics> {
+async function run(browser: Browser, emptyWorker = false): Promise<Metrics> {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await ctx.addInitScript(probe);
+  // Firefox can start a worker from an empty script, which then never
+  // answers. The warmup run (unmeasured) gets one, and must still color.
+  if (emptyWorker) {
+    let first = true;
+    await ctx.route(/\/hl-worker\.js/, (route) => (first ? ((first = false), route.fulfill({ body: '', contentType: 'text/javascript' })) : route.continue()));
+  }
   // The page refreshes a stale manifest from GitHub after it paints; answer
   // with the cached one so the run stays offline and the head never moves.
   await ctx.route(/\/api\/pr\/[^?]+$/, async (route) => {
@@ -362,7 +368,7 @@ try {
   const browser = await firefox.launch({ headless: !flag('--headed') });
   const runs: Metrics[] = [];
   for (let i = 0; i <= RUNS; i++) {
-    const r = await run(browser);
+    const r = await run(browser, i === 0);
     if (i) runs.push(r);
     process.stderr.write(i ? `run ${i}/${RUNS}\n` : 'warmup\n');
   }

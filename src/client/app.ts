@@ -990,7 +990,10 @@ class App {
     const first: number[] = [];
     for (let i = 0; i < this.files.length && first.length < 6; i++) if (this.reasonFor(this.files[i]!) === null) first.push(i);
     const patches = this.loadPatches(first);
-    this.hl = new Highlighter(await highlightWorkers(), (lang) => this.grammar(lang));
+    // A replacement skips the HTTP cache, in case that is where an empty script came from.
+    const url = await highlightWorkerUrl();
+    const fresh = url.startsWith('blob:') ? url : `${url}${url.includes('?') ? '&' : '?'}retry=${Date.now()}`;
+    this.hl = new Highlighter(await highlightWorkers(), (lang) => this.grammar(lang), () => new Worker(fresh));
     for (const i of first) this.hl.preload(this.files[i]!.lang);
     const main = h('div', { class: 'diff-view' }, h('div', { class: 'land-mask' }), this.el.flash, this.el.list);
     this.el.sidebar.append(this.tree.el);
