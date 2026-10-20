@@ -1017,8 +1017,14 @@ class App {
       },
       { signal },
     );
-    window.addEventListener('pointerdown', () => (this.pointerDown = true), { signal, capture: true });
-    window.addEventListener('pointerup', () => ((this.pointerDown = false), this.flushDeferred()), { signal, capture: true });
+    // Only a primary press can start a selection. A press can end without a
+    // pointerup (dragging selected text cancels it; a context menu swallows
+    // it), so any buttonless move also counts as released.
+    const release = () => ((this.pointerDown = false), this.flushDeferred());
+    window.addEventListener('pointerdown', (e) => e.button === 0 && (this.pointerDown = true), { signal, capture: true });
+    window.addEventListener('pointerup', release, { signal, capture: true });
+    window.addEventListener('pointercancel', release, { signal, capture: true });
+    window.addEventListener('pointermove', (e) => this.pointerDown && !e.buttons && release(), { signal, capture: true, passive: true });
     document.addEventListener('selectionchange', () => this.deferred.size && this.flushDeferred(), { signal });
     let raf = 0;
     window.addEventListener(

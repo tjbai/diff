@@ -146,6 +146,31 @@ async function inputDelay(page: Page, from: number, names: string[]): Promise<nu
   );
 }
 
+/** Open code files on screen still without syntax colors once the highlighter
+ *  and render queue are idle: colors that arrived but were never painted, or
+ *  never arrived. Not a budget: any one fails the check. */
+const uncolored: string[] = [];
+async function checkColors(page: Page, phase: string) {
+  const paths = await page.evaluate(async () => {
+    type View = { i: number; rendered: boolean; collapsed: boolean; f: { path: string; lang: string }; parsed: { hunks: unknown[] } | null; el: HTMLElement; body: HTMLElement };
+    type App = { views: Map<number, View>; renderQueue: View[]; reasons: (string | null)[]; hl: { slots: { pending: number }[] } };
+    const app = (window as unknown as { __prvApp: App }).__prvApp;
+    for (const t = performance.now(); performance.now() - t < 5000; ) {
+      await new Promise((r) => setTimeout(r, 50));
+      if (!app.renderQueue.length && app.hl.slots.every((s) => !s.pending)) break;
+    }
+    await new Promise((r) => requestAnimationFrame(r));
+    return [...app.views.values()]
+      .filter((v) => {
+        const r = v.el.getBoundingClientRect();
+        return r.bottom > 0 && r.top < innerHeight && v.rendered && !v.collapsed && app.reasons[v.i] === null && v.f.lang !== 'text' && v.parsed?.hunks.length;
+      })
+      .filter((v) => !v.body.querySelector('[class*="tk"]'))
+      .map((v) => v.f.path);
+  });
+  for (const p of paths) uncolored.push(`${phase}: ${p}`);
+}
+
 /** Run an interaction, then report its worst input latency and the jank it left behind. */
 async function interaction(page: Page, names: string[], act: () => Promise<void>) {
   const t = await now(page);
@@ -191,6 +216,7 @@ async function run(browser: Browser): Promise<Metrics> {
   out['load.blocking ms'] = lf.blocking;
   out['load.longestFrame ms'] = lf.max;
   out['load.domNodes'] = load.nodes;
+  await checkColors(page, 'load');
 
   // Scroll down through the diff, as a wheel would.
   await page.mouse.move(900, 500);
@@ -223,6 +249,17 @@ async function run(browser: Browser): Promise<Metrics> {
   out['scroll.blocking ms'] = sf.blocking;
   out['scroll.blankFrames %'] = Math.round((100 * bs.blank) / Math.max(1, bs.frames));
   await settle(page, 500);
+  await checkColors(page, 'scroll');
+
+  // Drag a selected word away. A native drag ends the press with
+  // pointercancel, not pointerup; files colored after it must still paint.
+  const word = page.locator('.file:not(.collapsed) span[class*="tk"]').filter({ hasText: /^[a-z]{4,}$/i }).first();
+  const [wx, wy] = await center(word);
+  await page.mouse.dblclick(wx, wy);
+  await page.mouse.move(wx, wy);
+  await page.mouse.down();
+  await page.mouse.move(wx + 200, wy + 200, { steps: 8 });
+  await page.mouse.up();
 
   // Drag the scrollbar far away: how long until the screen shows code.
   let worst = 0;
@@ -244,6 +281,7 @@ async function run(browser: Browser): Promise<Metrics> {
     worst = Math.max(worst, ms);
     const end = await settle(page, 500, 10_000);
     tb += (await frames(page, t, Math.max(end, t) + 1)).blocking;
+    await checkColors(page, `teleport ${frac}`);
   }
   out['teleport.toContent ms'] = worst;
   out['teleport.blocking ms'] = tb;
@@ -302,6 +340,7 @@ async function run(browser: Browser): Promise<Metrics> {
   r = await interaction(page, ['click', 'pointerup', 'mouseup'], () => page.mouse.click(sx, sy));
   out['split.input ms'] = r.input;
   out['split.blocking ms'] = r.blocking;
+  await checkColors(page, 'split');
 
   await ctx.close();
   return out;
@@ -331,6 +370,10 @@ try {
   const measured: Metrics = { ...sizes };
   for (const k of Object.keys(runs[0]!)) measured[k] = median(runs.map((r) => r[k]!));
   if (flag('--json')) console.log(JSON.stringify({ measured, runs }));
+  if (uncolored.length) {
+    console.error(`perf: ${uncolored.length} file(s) on screen never got syntax colors:\n  ${[...new Set(uncolored)].slice(0, 20).join('\n  ')}`);
+    process.exitCode = 1;
+  }
 
   if (target) {
     for (const [k, v] of Object.entries(measured)) console.log(`${k.padEnd(28)} ${v}  (${runs.map((r) => r[k] ?? '').join(' ')})`);
