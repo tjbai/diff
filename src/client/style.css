@@ -121,7 +121,6 @@ code, kbd { font-family: var(--fontStack-monospace); }
 .color-fg-danger { color: var(--fg-danger); }
 .Link--primary { color: var(--fg) !important; }
 .Link--primary:hover { color: var(--fg-accent) !important; }
-.boot { padding: 48px 32px; color: var(--fg-muted); }
 .boot-error { margin: 24px 32px; white-space: pre-wrap; }
 .flash-container:empty { display: none; }
 
