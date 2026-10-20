@@ -24,6 +24,24 @@ const hlP = createHighlighterCore({
 // Grammars by language, loaded or loading. A request that arrives while its
 // grammar is still being fetched waits for it.
 const loading = new Map<string, Promise<void>>();
+/** Each language's grammar as first sent, so a failed load can be tried again. */
+const sources = new Map<string, unknown[] | string>();
+
+/** A grammar from the server. Firefox has handed this worker empty 200
+ *  bodies, so a bad read is logged (transferSize 0 means it came from the
+ *  HTTP cache) and fetched again past the cache. */
+async function fetchGrammar(url: string): Promise<unknown[]> {
+  const res = await fetch(url);
+  const text = await res.text();
+  try {
+    if (res.ok) return JSON.parse(text);
+  } catch {}
+  const t = performance.getEntriesByName(new URL(url, location.href).href).at(-1) as PerformanceResourceTiming | undefined;
+  console.warn(`diff highlight: ${url} came back ${res.status} with ${text.length} chars (transferSize ${t?.transferSize ?? '?'}); refetching`);
+  const again = await fetch(url, { cache: 'reload' });
+  if (!again.ok) throw new Error(`${url}: ${again.status}`);
+  return again.json();
+}
 
 self.onmessage = async (e: MessageEvent<Req | { ping: true }>) => {
   // The pool's liveness check: proves this script loaded and ran.
@@ -31,14 +49,16 @@ self.onmessage = async (e: MessageEvent<Req | { ping: true }>) => {
   const { id, lang, grammar, docs } = e.data;
   try {
     const hl = await hlP;
-    if (grammar?.length && !loading.has(lang)) {
-      loading.set(
-        lang,
-        (async () => {
-          const g = typeof grammar === 'string' ? await (await fetch(grammar)).json() : grammar;
-          await hl.loadLanguage(...(g as never[]));
-        })(),
-      );
+    if (grammar?.length) sources.set(lang, grammar);
+    const src = sources.get(lang);
+    if (src && !loading.has(lang)) {
+      const p = (async () => {
+        const g = typeof src === 'string' ? await fetchGrammar(src) : src;
+        await hl.loadLanguage(...(g as never[]));
+      })();
+      loading.set(lang, p);
+      // Forget a failure, so the next request for this language tries again.
+      p.catch(() => loading.delete(lang));
     }
     await loading.get(lang);
     if (!docs) return;

@@ -182,14 +182,16 @@ async function interaction(page: Page, names: string[], act: () => Promise<void>
 
 // ------------------------------------------------------------ one run
 
-async function run(browser: Browser, emptyWorker = false): Promise<Metrics> {
+async function run(browser: Browser, emptyBodies = false): Promise<Metrics> {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await ctx.addInitScript(probe);
-  // Firefox can start a worker from an empty script, which then never
-  // answers. The warmup run (unmeasured) gets one, and must still color.
-  if (emptyWorker) {
-    let first = true;
-    await ctx.route(/\/hl-worker\.js/, (route) => (first ? ((first = false), route.fulfill({ body: '', contentType: 'text/javascript' })) : route.continue()));
+  // Firefox has handed us empty 200 bodies for the worker script and for
+  // grammars. The warmup run (unmeasured) gets one of each, and must still color.
+  if (emptyBodies) {
+    for (const [re, type] of [[/\/hl-worker\.js/, 'text/javascript'], [/\/api\/lang\//, 'application/json']] as const) {
+      let first = true;
+      await ctx.route(re, (route) => (first ? ((first = false), route.fulfill({ body: '', contentType: type })) : route.continue()));
+    }
   }
   // The page refreshes a stale manifest from GitHub after it paints; answer
   // with the cached one so the run stays offline and the head never moves.
@@ -259,13 +261,16 @@ async function run(browser: Browser, emptyWorker = false): Promise<Metrics> {
 
   // Drag a selected word away. A native drag ends the press with
   // pointercancel, not pointerup; files colored after it must still paint.
+  // (No colored word means colors are already broken, and recorded above.)
   const word = page.locator('.file:not(.collapsed) span[class*="tk"]').filter({ hasText: /^[a-z]{4,}$/i }).first();
-  const [wx, wy] = await center(word);
-  await page.mouse.dblclick(wx, wy);
-  await page.mouse.move(wx, wy);
-  await page.mouse.down();
-  await page.mouse.move(wx + 200, wy + 200, { steps: 8 });
-  await page.mouse.up();
+  if (await word.count()) {
+    const [wx, wy] = await center(word);
+    await page.mouse.dblclick(wx, wy);
+    await page.mouse.move(wx, wy);
+    await page.mouse.down();
+    await page.mouse.move(wx + 200, wy + 200, { steps: 8 });
+    await page.mouse.up();
+  }
 
   // Drag the scrollbar far away: how long until the screen shows code.
   let worst = 0;
