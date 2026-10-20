@@ -110,9 +110,9 @@ async function route(req: Request, url: URL): Promise<Response> {
   if (path === '/app.js') {
     return text(client.js, 'text/javascript; charset=utf-8', { 'cache-control': 'public, max-age=31536000, immutable' });
   }
-  if (path === '/hl-worker.js') {
-    return text(client.worker, 'text/javascript; charset=utf-8', { 'cache-control': 'public, max-age=31536000, immutable' });
-  }
+  // Firefox has handed workers empty bodies for this and for grammars, maybe
+  // from stale cache entries; from localhost, caching either saves nothing.
+  if (path === '/hl-worker.js') return text(client.worker, 'text/javascript; charset=utf-8', { 'cache-control': 'no-store' });
 
   if ((m = PR_API.exec(path))) {
     const [owner, repo, n] = [m[1]!, m[2]!, Number(m[3])];
@@ -153,7 +153,7 @@ async function route(req: Request, url: URL): Promise<Response> {
   }
 
   if ((m = /^\/api\/lang\/([\w+#-]+)$/.exec(path))) {
-    return json(await grammar(m[1]!), { headers: { 'cache-control': 'public, max-age=86400' } });
+    return json(await grammar(m[1]!), { headers: { 'cache-control': 'no-store' } });
   }
 
   if (path === '/api/export' && req.method === 'POST') {

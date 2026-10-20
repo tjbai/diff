@@ -15,6 +15,8 @@ interface Slot {
 
 /** How long a new worker gets to answer its ping before it is replaced. */
 const PING_MS = 3000;
+/** How long a tokenize request waits for its answer. */
+const TOKENIZE_MS = 20_000;
 
 export class Highlighter {
   private slots: Slot[] = [];
@@ -26,7 +28,7 @@ export class Highlighter {
   constructor(
     workers: Worker[],
     private grammar: (lang: string) => Grammar | null,
-    /** A replacement worker, fetched fresh. */
+    /** A replacement worker (its script is served uncached). */
     private spawn: () => Worker,
   ) {
     for (const w of workers) this.adopt({ w, langs: new Set(), pending: 0, ready: false }, 1);
@@ -98,6 +100,9 @@ export class Highlighter {
         slot.pending++;
         this.waiters.set(id, resolve);
         slot.w.postMessage({ id, lang, grammar, docs });
+        // A worker that never answers keeps its pending count, so new work
+        // routes around it; the caller gets null and the page's sweep asks again.
+        setTimeout(() => this.waiters.delete(id) && resolve(null), TOKENIZE_MS);
       };
       send();
     });

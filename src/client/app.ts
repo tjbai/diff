@@ -173,6 +173,11 @@ class FileView {
   parsed: Parsed | null = null;
   rows: Row[] = [];
   tokens: Tokens | null = null;
+  /** The tokens the body was last painted with. */
+  painted: Tokens | null = null;
+  /** Tokenize requests made, and how many are out (see `App.sweep`). */
+  asks = 0;
+  asking = 0;
   full: { old: string[]; new: string[] } | null = null;
   private hydrating: Promise<void> | null = null;
 
@@ -238,6 +243,7 @@ class FileView {
     let max = 0;
     for (const r of this.rows) if (r.type === 'line') max = Math.max(max, r.line.o, r.line.n);
     const trs = renderRows(this.rows, mode, this.tokens);
+    this.painted = this.tokens;
     const table = (rows: string[]) =>
       `<table class="diff-table js-diff-table tab-size${mode === 'split' ? ' file-diff-split' : ''}" data-tab-size="8">${colgroup(mode, max)}<tbody>${rows.join('')}</tbody></table>`;
     // A long diff is a stack of tables, each skipped by content-visibility
@@ -272,7 +278,9 @@ class FileView {
     }
     if (docs.reduce((a, s) => a + s.length, 0) > MAX_HIGHLIGHT) return;
     const full = this.full;
-    const out = await this.app.hl.tokenize(f.lang, docs);
+    this.asks++;
+    this.asking++;
+    const out = await this.app.hl.tokenize(f.lang, docs).finally(() => this.asking--);
     if (!out || this.full !== full) return;
     this.tokens = { old: out.slice(0, nOld).flat(), new: out.slice(nOld).flat(), oldIdx, newIdx };
     if (!this.collapsed) this.app.paintWhenIdle(this);
@@ -602,23 +610,28 @@ class App {
     this.renderHeaderStats();
   }
 
-  /** Repaint a file with fresh tokens, but never under a live selection or drag. */
-  private deferred = new Set<FileView>();
+  /** Repaint a file with fresh tokens, but never under a live selection or
+   *  drag; the sweep tries again once it is over. */
   private pointerDown = false;
   paintWhenIdle(v: FileView) {
-    if (!this.selectionIn(v)) return this.queueRender(v, true);
-    this.deferred.add(v);
+    if (!this.selectionIn(v)) this.queueRender(v, true);
   }
   private selectionIn(v: FileView): boolean {
     if (this.pointerDown) return true;
     const sel = document.getSelection();
     return !!sel && !sel.isCollapsed && sel.rangeCount > 0 && v.body.contains(sel.getRangeAt(0).commonAncestorContainer);
   }
-  flushDeferred() {
-    for (const v of [...this.deferred]) {
-      if (this.selectionIn(v)) continue;
-      this.deferred.delete(v);
-      this.queueRender(v, true);
+  /** Every couple of seconds, finish any open code file left uncolored: ask
+   *  again when its colors never came (up to three asks in all), and repaint
+   *  when they came but never reached the screen (or waited out a
+   *  selection). Whatever drops a step, known or not, costs a delay instead
+   *  of a plain file. */
+  sweep() {
+    for (const v of this.views.values()) {
+      if (!v.rendered || v.collapsed || this.reasons[v.i] !== null || !v.parsed?.hunks.length) continue;
+      if (!v.tokens) {
+        if (v.asks && v.asks < 3 && !v.asking) void v.highlight();
+      } else if (v.painted !== v.tokens) this.paintWhenIdle(v);
     }
   }
 
@@ -990,10 +1003,8 @@ class App {
     const first: number[] = [];
     for (let i = 0; i < this.files.length && first.length < 6; i++) if (this.reasonFor(this.files[i]!) === null) first.push(i);
     const patches = this.loadPatches(first);
-    // A replacement skips the HTTP cache, in case that is where an empty script came from.
     const url = await highlightWorkerUrl();
-    const fresh = url.startsWith('blob:') ? url : `${url}${url.includes('?') ? '&' : '?'}retry=${Date.now()}`;
-    this.hl = new Highlighter(await highlightWorkers(), (lang) => this.grammar(lang), () => new Worker(fresh));
+    this.hl = new Highlighter(await highlightWorkers(), (lang) => this.grammar(lang), () => new Worker(url));
     for (const i of first) this.hl.preload(this.files[i]!.lang);
     const main = h('div', { class: 'diff-view' }, h('div', { class: 'land-mask' }), this.el.flash, this.el.list);
     this.el.sidebar.append(this.tree.el);
@@ -1023,12 +1034,13 @@ class App {
     // Only a primary press can start a selection. A press can end without a
     // pointerup (dragging selected text cancels it; a context menu swallows
     // it), so any buttonless move also counts as released.
-    const release = () => ((this.pointerDown = false), this.flushDeferred());
+    const release = () => (this.pointerDown = false);
     window.addEventListener('pointerdown', (e) => e.button === 0 && (this.pointerDown = true), { signal, capture: true });
     window.addEventListener('pointerup', release, { signal, capture: true });
     window.addEventListener('pointercancel', release, { signal, capture: true });
     window.addEventListener('pointermove', (e) => this.pointerDown && !e.buttons && release(), { signal, capture: true, passive: true });
-    document.addEventListener('selectionchange', () => this.deferred.size && this.flushDeferred(), { signal });
+    const sweeper = setInterval(() => this.sweep(), 2000);
+    signal.addEventListener('abort', () => clearInterval(sweeper));
     let raf = 0;
     window.addEventListener(
       'scroll',
