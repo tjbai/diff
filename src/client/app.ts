@@ -883,7 +883,7 @@ class App {
       : '';
     this.paintKeepingMenus(
       this.el.header,
-      `<h1 class="pr-title-line"><bdi class="pr-title">${titleHtml(meta.title)}</bdi> <span class="pr-number">#${meta.number}</span></h1>` +
+      `<h1 class="pr-title-line"><a class="Link--primary" href="${repo}/pull/${meta.number}" target="_blank" rel="noreferrer"><bdi class="pr-title">${titleHtml(meta.title)}</bdi></a> <span class="pr-number">#${meta.number}</span></h1>` +
         `<div class="pr-meta-row"><div class="pr-meta">${this.stateBadge()}` +
         `<a class="author" href="https://github.com/${esc(meta.author)}" target="_blank" rel="noreferrer">${esc(meta.author)}</a><span>${verb} ${fmt(meta.commits)} commit${meta.commits === 1 ? '' : 's'} into</span>` +
         `<a class="commit-ref base-ref" href="${repo}/tree/${esc(meta.baseRef)}" target="_blank" rel="noreferrer" title="${esc(meta.baseRef)}">${esc(meta.baseRef)}</a><span>from</span>` +

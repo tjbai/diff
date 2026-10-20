@@ -132,7 +132,7 @@ code, kbd { font-family: var(--fontStack-monospace); }
 /* Cover the sub-pixel gap a sticky header can leave above itself at fractional zoom. */
 .pr-header::before { position: absolute; right: 0; bottom: 100%; left: 0; height: 8px; content: ""; background: var(--bg); }
 .pr-title-line { margin: 0 0 8px; font-size: 20px; font-weight: 400; line-height: 28px; overflow-wrap: anywhere; }
-.pr-title { font-weight: 600; color: var(--fg); }
+.pr-title { font-weight: 600; }
 .pr-title code { padding: .1em .3em; font-size: 85%; border-radius: 6px; background: var(--bg-neutral-muted); }
 .pr-number { font-weight: 300; color: var(--fg-muted); }
 .pr-meta-row { display: flex; align-items: center; gap: 16px; min-height: 32px; }
