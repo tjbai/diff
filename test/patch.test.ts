@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { pathOrder, splitPatch } from '../src/patch.ts';
-import { buildRows, parsePatch, patchDocs } from '../src/client/diff.ts';
+import { buildRows, parsePatch, patchDocs, renderRows, rowHeights, screenLines } from '../src/client/diff.ts';
 
 test('pathOrder matches git and GitHub: plain byte order of the path', () => {
   const paths = ['a/b/c.ts', 'a/b.ts', 'B.md', 'a/b10.ts', 'a/b2.ts', 'a.ts'];
@@ -59,4 +59,47 @@ test('patchDocs highlights each hunk on its own so a cut-off string cannot leak'
   const lines = rows.flatMap((r) => (r.type === 'line' ? [r.line] : []));
   expect(lines.map((l) => d.oldIdx.get(l) ?? -1)).toEqual([0, 1, -1, 2, -1]);
   expect(lines.map((l) => d.newIdx.get(l) ?? -1)).toEqual([0, 1, 2, 3, 4]);
+});
+
+test('rowHeights sizes each row renderRows makes, so a file box fits before it renders', () => {
+  const patch = [
+    '@@ -1,4 +1,5 @@',
+    ' a',
+    '-b',
+    '-c',
+    '+B',
+    '+C',
+    '+D',
+    ` ${'w'.repeat(30)}`,
+    '@@ -10,2 +11,2 @@',
+    ' x',
+    '-y',
+    '+Y',
+    '@@ -40,1 +41,1 @@',
+    '-z',
+    '+Z',
+  ].join('\n');
+  const rows = buildRows(parsePatch(patch), true, true);
+  // Hunk rows are 28px, or 40px with both expanders after a gap of more than
+  // 20 lines (12–39 here); lines are 20px a screen line, and 30 characters
+  // take three at 12 per line. Split pairs b/c with B/C/D, y/Y, and z/Z.
+  const unified = [28, 20, 20, 20, 20, 20, 20, 60, 28, 20, 20, 20, 40, 20, 20, 28];
+  const split = [28, 20, 20, 20, 20, 60, 28, 20, 20, 40, 20, 28];
+  for (const [mode, want] of [['unified', unified], ['split', split]] as const) {
+    const px = rowHeights(rows, mode, 12);
+    expect(px).toEqual(want);
+    const trs = renderRows(rows, mode, null);
+    expect(trs.map((tr) => tr.includes('is-twin'))).toEqual(px.map((h) => h === 40));
+  }
+});
+
+test('screenLines wraps code where the browser does', () => {
+  expect(screenLines('short', 10)).toBe(1);
+  // Words move to the next line whole: three lines, though 19 characters fit in two.
+  expect(screenLines('aaaaaaa bbbbbbb ccc', 10)).toBe(3);
+  // A word longer than a line starts a new one, then breaks anywhere.
+  expect(screenLines(`    ${'a'.repeat(12)}`, 10)).toBe(3);
+  expect(screenLines('a'.repeat(25), 10)).toBe(3);
+  // A tab runs to the next stop of 8.
+  expect(screenLines('\tx', 8)).toBe(2);
 });

@@ -1,14 +1,14 @@
 {
   "bundle": {
-    "app.js bytes": 55600,
-    "app.js gzip bytes": 19500,
+    "app.js bytes": 59600,
+    "app.js gzip bytes": 20900,
     "hl-worker.js bytes": 196700,
     "hl-worker.js gzip bytes": 60800,
     "style.css bytes": 39100,
     "style.css gzip bytes": 10400
   },
   "perf": {
-    "bytes.html": 40600,
+    "bytes.html": 41600,
     "bytes.manifest": 245900,
     "load.firstPaint ms": 130,
     "load.fcp ms": 45,

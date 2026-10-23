@@ -27,7 +27,8 @@ export interface Parsed {
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
-export function parsePatch(text: string): Parsed {
+/** `words: false` skips the word highlights, for when only the layout matters. */
+export function parsePatch(text: string, words = true): Parsed {
   const hunks: Hunk[] = [];
   let cur: Hunk | null = null;
   let o = 0;
@@ -62,7 +63,7 @@ export function parsePatch(text: string): Parsed {
     else if (c === '-') cur.lines.push({ k: '-', t, o: o++, n: 0 });
     else if (c === ' ') cur.lines.push({ k: ' ', t, o: o++, n: n++ });
   }
-  for (const h of hunks) markWordDiffs(h.lines);
+  if (words) for (const h of hunks) markWordDiffs(h.lines);
   return { hunks, binary };
 }
 
@@ -294,6 +295,55 @@ function expanders(row: Extract<Row, { type: 'hunk' | 'tail' }>, i: number): str
   return btn('down', 'fold-down', 'Expand Down') + btn('up', 'fold-up', 'Expand Up');
 }
 
+/** Row heights in px (see style.css): a code line that does not wrap, a hunk
+ *  row, and a hunk row with both expanders stacked. */
+export const ROW_PX = 20;
+export const HUNK_PX = 28;
+export const TWIN_PX = 40;
+
+const ALNUM = /[A-Za-z0-9]/;
+
+/** Whether a line of code may wrap before `s[i]`: after spaces, a hyphen
+ *  inside a word, or a slash, and before a bracket that follows punctuation.
+ *  Roughly where Firefox breaks code (UAX #14). */
+function breakBefore(s: string, i: number): boolean {
+  const c = s[i]!;
+  const p = s[i - 1]!;
+  if (c === ' ') return false;
+  if (p === ' ') return true;
+  if (p === '-') return ALNUM.test(s[i - 2] ?? '') && /[A-Za-z]/.test(c);
+  if (p === '/') return c !== '/' && !/\d/.test(c);
+  return '([{'.includes(c) && ':;,!?)]}'.includes(p);
+}
+
+/** Screen lines a line of code takes in a cell `cpl` characters wide
+ *  (white-space: pre-wrap, overflow-wrap: anywhere, tab-size 8). */
+export function screenLines(t: string, cpl: number): number {
+  if (t.length * 8 <= cpl) return 1;
+  let s = t;
+  if (t.includes('\t')) {
+    s = '';
+    for (const ch of t) s += ch === '\t' ? ' '.repeat(8 - (s.length % 8)) : ch;
+  }
+  if (s.length <= cpl) return 1;
+  let lines = 1;
+  let col = 0;
+  let start = 0;
+  for (let i = 1; i <= s.length; i++) {
+    if (i < s.length && !breakBefore(s, i)) continue;
+    let end = i;
+    while (end > start && s[end - 1] === ' ') end--;
+    const w = end - start;
+    if (col && col + w > cpl) (lines++, (col = 0));
+    // A piece longer than a whole line breaks anywhere; trailing spaces hang.
+    const over = Math.max(0, Math.ceil(w / cpl) - 1);
+    lines += over;
+    col += w - over * cpl + (i - end);
+    start = i;
+  }
+  return lines;
+}
+
 /** One `<tr>` per display row. */
 export function renderRows(rows: Row[], mode: 'split' | 'unified', tk: Tokens | null): string[] {
   const out: string[] = [];
@@ -302,8 +352,7 @@ export function renderRows(rows: Row[], mode: 'split' | 'unified', tk: Tokens | 
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i]!;
     if (r.type !== 'line') {
-      const twin = r.gap && r.type === 'hunk' && !r.first && r.gap.oldTo - r.gap.oldFrom + 1 > EXPAND_STEP;
-      out.push(`<tr class="js-expandable-line${twin ? ' is-twin' : ''}"><td class="blob-num blob-num-expandable" colspan="${nums}">${expanders(r, i)}</td><td class="blob-code blob-code-inner blob-code-hunk" colspan="${codeSpan}">${r.type === 'hunk' ? esc(r.header) : ''}</td></tr>`);
+      out.push(`<tr class="js-expandable-line${twin(r) ? ' is-twin' : ''}"><td class="blob-num blob-num-expandable" colspan="${nums}">${expanders(r, i)}</td><td class="blob-code blob-code-inner blob-code-hunk" colspan="${codeSpan}">${r.type === 'hunk' ? esc(r.header) : ''}</td></tr>`);
       continue;
     }
     const l = r.line;
@@ -315,16 +364,7 @@ export function renderRows(rows: Row[], mode: 'split' | 'unified', tk: Tokens | 
       out.push(`<tr>${numCell(' ', l.o)}${codeCell(l, tk, 'left')}${numCell(' ', l.n)}${codeCell(l, tk, 'right')}</tr>`);
       continue;
     }
-    // A change block: deletions then additions, paired line by line.
-    const dels: Line[] = [];
-    const adds: Line[] = [];
-    let j = i;
-    while (j < rows.length) {
-      const rj = rows[j]!;
-      if (rj.type !== 'line' || rj.line.k === ' ') break;
-      (rj.line.k === '-' ? dels : adds).push(rj.line);
-      j++;
-    }
+    const [dels, adds, j] = changeBlock(rows, i);
     for (let p = 0; p < Math.max(dels.length, adds.length); p++) {
       const d = dels[p];
       const a = adds[p];
@@ -335,9 +375,56 @@ export function renderRows(rows: Row[], mode: 'split' | 'unified', tk: Tokens | 
   return out;
 }
 
+/** A hunk row after a gap too long to expand in one step: it has both expanders. */
+const twin = (r: Extract<Row, { type: 'hunk' | 'tail' }>) => !!r.gap && r.type === 'hunk' && !r.first && r.gap.oldTo - r.gap.oldFrom + 1 > EXPAND_STEP;
+
+/** A change block from rows[i] on: its deletions and additions, which split
+ *  pairs line by line, and the index after it. */
+function changeBlock(rows: Row[], i: number): [Line[], Line[], number] {
+  const dels: Line[] = [];
+  const adds: Line[] = [];
+  let j = i;
+  while (j < rows.length) {
+    const rj = rows[j]!;
+    if (rj.type !== 'line' || rj.line.k === ' ') break;
+    (rj.line.k === '-' ? dels : adds).push(rj.line);
+    j++;
+  }
+  return [dels, adds, j];
+}
+
+/** The height in px of each `<tr>` from `renderRows`, when code cells hold `cpl` characters per line. */
+export function rowHeights(rows: Row[], mode: 'split' | 'unified', cpl: number): number[] {
+  const out: number[] = [];
+  const lines = (l: Line | undefined) => (l ? screenLines(l.t, cpl) : 1);
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]!;
+    if (r.type !== 'line') out.push(twin(r) ? TWIN_PX : HUNK_PX);
+    else if (mode === 'unified' || r.line.k === ' ') out.push(lines(r.line) * ROW_PX);
+    else {
+      const [dels, adds, j] = changeBlock(rows, i);
+      for (let p = 0; p < Math.max(dels.length, adds.length); p++) out.push(Math.max(lines(dels[p]), lines(adds[p])) * ROW_PX);
+      i = j - 1;
+    }
+  }
+  return out;
+}
+
+/** The highest line number shown, which sets the number columns' width. */
+export function maxLine(rows: Row[]): number {
+  let max = 0;
+  for (const r of rows) if (r.type === 'line') max = Math.max(max, r.line.o, r.line.n);
+  return max;
+}
+
+/** A character's width in 12px code (see .blob-code-inner). */
+export const CHAR_PX = 7.23;
+
+/** A line-number column's width: GitHub's 44px in split, 50px in unified, wider for long files. */
+export const numWidth = (mode: 'split' | 'unified', maxLine: number) => Math.max(mode === 'split' ? 44 : 50, Math.ceil(String(maxLine).length * CHAR_PX + 20));
+
 export function colgroup(mode: 'split' | 'unified', maxLine: number): string {
-  // GitHub's number columns: 44px in split, 50px in unified, wider for long files.
-  const w = Math.max(mode === 'split' ? 44 : 50, Math.ceil(String(maxLine).length * 7.23 + 20));
+  const w = numWidth(mode, maxLine);
   return mode === 'split' ? `<colgroup><col width="${w}"><col><col width="${w}"><col></colgroup>` : `<colgroup><col width="${w}"><col width="${w}"><col></colgroup>`;
 }
 

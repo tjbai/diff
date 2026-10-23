@@ -276,14 +276,21 @@ kbd { display: inline-block; padding: 0 4px; font-size: 11px; line-height: 16px;
 
 /* ---------------------------------------------------------------- file */
 /* The clip reaches the border box so the header (below) can paint over the
-   box's edge. --edge is that edge: gray, or the current file's 2px ring. */
-.file { --edge: 1px solid var(--border); position: relative; margin-bottom: 16px; overflow: clip; overflow-clip-margin: 1px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; content-visibility: auto; contain-intrinsic-size: auto 440px; }
-.file.is-current { --edge: 2px solid var(--fg-accent); border-color: transparent; }
+   box's edge. --edge is that edge: gray, or the current file's 2px ring,
+   set only where drawn, since a change on the box restyles every row. */
+.file { --edge: 1px solid var(--border); position: relative; margin-bottom: 16px; overflow: clip; overflow-clip-margin: 1px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; content-visibility: auto; contain-intrinsic-size: auto calc(36px + var(--u)); }
+.file.is-current { border-color: transparent; }
+.file.is-current::after, .file.is-current > .file-header { --edge: 2px solid var(--fg-accent); }
 .file.is-current::after { position: absolute; inset: -1px; z-index: 1; pointer-events: none; content: ""; border: var(--edge); border-radius: 6px; }
 /* Off-screen files (and the off-screen parts of long ones) are skipped for
    style, layout, and paint, and changes inside one file never relayout the
-   rest of the page. Each shell carries a size estimate inline. */
-.js-file-content { content-visibility: auto; contain-intrinsic-size: auto 400px; }
+   rest of the page. A box holds its body's height (--u unified, --s split)
+   until it renders, even on screen. */
+.js-file-content { content-visibility: auto; contain-intrinsic-size: auto var(--u); }
+[data-diff-style="split"] .file { contain-intrinsic-size: auto calc(36px + var(--s)); }
+[data-diff-style="split"] .js-file-content { contain-intrinsic-size: auto var(--s); }
+.file.collapsed { contain-intrinsic-size: auto 36px; }
+.file:empty, .js-file-content:empty, .diff-segment:empty { contain: size; }
 /* Pinned under the page header, with its top edge on the landing line. The
    header draws its own rounded top edge over the box's (::after), on an opaque
    backing (::before) that hides the box's sides and the code behind its

@@ -234,10 +234,10 @@ async function run(browser: Browser, emptyBodies = false): Promise<Metrics> {
       if (!s.on) return;
       s.frames++;
       // A point that lands on a file's own box (its header and body are not
-      // there yet, or not painted) or on a body with nothing in it yet.
+      // there yet, or not painted) or on a body or a long diff's table with nothing in it yet.
       const empty = (y: number) => {
         const el = document.elementFromPoint(900, innerHeight * y);
-        return !!el && (el.classList.contains('file') || (el.classList.contains('js-file-content') && !el.firstChild));
+        return !!el && (el.classList.contains('file') || (el.matches('.js-file-content, .diff-segment') && !el.firstChild));
       };
       if ([0.3, 0.6, 0.9].some(empty)) s.blank++;
       requestAnimationFrame(tick);
@@ -280,7 +280,7 @@ async function run(browser: Browser, emptyBodies = false): Promise<Metrics> {
     const ms = await page.evaluate(async (frac) => {
       const empty = (y: number) => {
         const el = document.elementFromPoint(900, innerHeight * y);
-        return !!el && (el.classList.contains('file') || (el.classList.contains('js-file-content') && !el.firstChild));
+        return !!el && (el.classList.contains('file') || (el.matches('.js-file-content, .diff-segment') && !el.firstChild));
       };
       const t = performance.now();
       scrollTo(0, frac * (document.documentElement.scrollHeight - innerHeight));

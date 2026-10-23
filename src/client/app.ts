@@ -7,9 +7,15 @@ import {
   esc,
   expand,
   icon,
+  CHAR_PX,
+  HUNK_PX,
+  maxLine,
   parsePatch,
   patchDocs,
   renderRows,
+  rowHeights,
+  numWidth,
+  ROW_PX,
   type Line,
   type Parsed,
   type Row,
@@ -49,6 +55,8 @@ const PREFETCH_BYTES = 32_000_000;
 const MAX_HIGHLIGHT = 2_000_000;
 /** Rows per table in a long diff (see `FileView.paint`). */
 const SEGMENT = 100;
+/** How far from the screen files and long diffs' tables render, in px. */
+const NEAR = 1200;
 const CAT_TITLE = new Map(CATEGORIES.map((c) => [c.id as string, c.title]));
 
 const store = {
@@ -135,16 +143,34 @@ function titleHtml(t: string): string {
 
 // ------------------------------------------------------------- one file
 
-/** A rendered body's height, roughly: GitHub's 20px rows, capped. */
-const fileEstimate = (f: FileEntry) => Math.min(40000, (f.additions + f.deletions) * 20 + 60);
+/** A body that holds one line of text (an empty, binary, or renamed file)
+ *  or the large-diff note (see style.css). */
+const MESSAGE_PX = 37;
+const LOAD_DIFF_PX = 78;
+
+/** Whether a file's diff shows expanders, and so a last row and taller hunk rows. */
+const expandable = (live: boolean, f: FileEntry) => live && f.status !== 'added' && f.status !== 'deleted';
+
+/** A file body's height before its patch is here: one hunk, with three
+ *  lines of context either side when the file has more (see `App.heights`
+ *  for the exact one). */
+function bodyEstimate(f: FileEntry, mode: DiffStyle, live: boolean): number {
+  if (f.size > LARGE_PATCH) return LOAD_DIFF_PX;
+  if (f.kinds?.includes('binary') || !(f.additions + f.deletions)) return MESSAGE_PX;
+  const lines = mode === 'split' ? Math.max(f.additions, f.deletions) : f.additions + f.deletions;
+  return expandable(live, f) ? (lines + 6) * ROW_PX + 2 * HUNK_PX : lines * ROW_PX + HUNK_PX;
+}
+
+/** A file's body heights, unified and split, as the CSS variables that size its box (see .file). */
+const sizeVars = ([u, s]: number[]) => `--u:${u}px;--s:${s}px`;
 
 /** One file's box, empty and sized for content-visibility (`auto` makes the
  *  browser remember the real height once it renders). Its header and body
  *  fill in when it nears the viewport: the browser builds layout objects for
  *  every element not `display: none`, so a 2,000-file PR mounts 2,000
  *  elements, not 40,000. */
-function fileShellHtml(f: FileEntry, i: number, hidden: boolean, reviewed: boolean): string {
-  return `<div class="file${reviewed ? ' collapsed is-reviewed' : ''}" data-i="${i}"${hidden ? ' hidden' : ''} style="contain-intrinsic-size:auto ${reviewed ? 38 : fileEstimate(f) + 38}px"></div>`;
+function fileShellHtml(i: number, est: number[], hidden: boolean, reviewed: boolean): string {
+  return `<div class="file${reviewed ? ' collapsed is-reviewed' : ''}" data-i="${i}"${hidden ? ' hidden' : ''} style="${sizeVars(est)}"></div>`;
 }
 
 /** A file's header and its empty body. */
@@ -154,7 +180,6 @@ function fileInnerHtml(f: FileEntry, reviewed: boolean): string {
   const stat =
     (f.additions ? `<span class="color-fg-success">+${fmt(f.additions)}</span>` : '') +
     (f.deletions ? `<span class="color-fg-danger">−${fmt(f.deletions)}</span>` : '');
-  const est = fileEstimate(f);
   return (
     `<div class="file-header"><div class="file-info">` +
     `<button type="button" class="btn-octicon js-details-target" data-act="toggle" aria-label="Toggle diff contents" aria-expanded="${!reviewed}">${icon('chevron-down', 'toggle-chevron')}</button>` +
@@ -163,7 +188,7 @@ function fileInnerHtml(f: FileEntry, reviewed: boolean): string {
     `<span class="diffstat">${binary ? 'BIN' : stat} ${diffstatBlocks(f.additions, f.deletions, f.status === 'added')}</span>` +
     `<label class="btn btn-sm reviewed-toggle" title="Mark reviewed (v)"><input type="checkbox" data-act="review"${reviewed ? ' checked' : ''}> Reviewed</label>` +
     `<button type="button" class="btn-octicon" data-act="hide" aria-label="Hide file" title="Hide file (h)">${icon('eye-closed')}</button></div></div>` +
-    `<div class="js-file-content" style="contain-intrinsic-size:auto ${est}px"></div>`
+    `<div class="js-file-content"></div>`
   );
 }
 
@@ -184,10 +209,21 @@ class FileView {
   constructor(
     private app: App,
     readonly i: number,
-    readonly el: HTMLElement,
+    public el: HTMLElement,
   ) {
     if (!el.firstChild) el.innerHTML = fileInnerHtml(this.f, app.isReviewed(i));
     this.body = el.lastElementChild as HTMLElement;
+  }
+
+  /** Move into a new, empty box (see `App.renew`). It renders again from
+   *  the patch and colors it already has. */
+  attach(el: HTMLElement) {
+    el.innerHTML = fileInnerHtml(this.f, this.app.isReviewed(this.i));
+    this.el = el;
+    this.body = el.lastElementChild as HTMLElement;
+    this.rendered = false;
+    this.segments?.disconnect();
+    el.querySelector('.js-details-target')!.setAttribute('aria-expanded', String(!this.collapsed));
   }
 
   get f() {
@@ -219,8 +255,8 @@ class FileView {
     }
     if (!this.parsed) {
       this.parsed = parsePatch(patch);
-      const expandable = this.app.live && f.status !== 'added' && f.status !== 'deleted';
-      this.rows = buildRows(this.parsed, expandable, expandable);
+      const exp = expandable(this.app.live, f);
+      this.rows = buildRows(this.parsed, exp, exp);
     }
     if (this.parsed.binary) return this.message('Binary file not shown.');
     if (!this.parsed.hunks.length) {
@@ -240,20 +276,44 @@ class FileView {
   paint() {
     if (!this.parsed?.hunks.length) return;
     const mode = this.app.diffStyle;
-    let max = 0;
-    for (const r of this.rows) if (r.type === 'line') max = Math.max(max, r.line.o, r.line.n);
+    const max = maxLine(this.rows);
     const trs = renderRows(this.rows, mode, this.tokens);
     this.painted = this.tokens;
     const table = (rows: string[]) =>
       `<table class="diff-table js-diff-table tab-size${mode === 'split' ? ' file-diff-split' : ''}" data-tab-size="8">${colgroup(mode, max)}<tbody>${rows.join('')}</tbody></table>`;
-    // A long diff is a stack of tables, each skipped by content-visibility
-    // while off screen, so landing on a 3,000-line file styles and lays out
-    // the hundred rows you see, not all of them.
+    this.segments?.disconnect();
+    if (trs.length <= SEGMENT) return void (this.body.innerHTML = `<div class="diff-table-wrap">${table(trs)}</div>`);
+    // A long diff is a stack of tables, each sized to its rows. Those near the
+    // screen fill in now and the rest as they come near, so landing on (or
+    // coloring) a 3,000-line file builds the rows around you, not all of them.
+    const px = rowHeights(this.rows, mode, this.app.cpl(max));
+    const later: string[] = [];
     let html = '';
-    if (trs.length <= SEGMENT) html = table(trs);
-    else for (let s = 0; s < trs.length; s += SEGMENT) html += `<div class="diff-segment" style="contain-intrinsic-size:auto ${Math.min(SEGMENT, trs.length - s) * 20}px">${table(trs.slice(s, s + SEGMENT))}</div>`;
+    let y = this.body.getBoundingClientRect().top;
+    for (let s = 0; s < trs.length; s += SEGMENT) {
+      const h = px.slice(s, s + SEGMENT).reduce((a, b) => a + b, 0);
+      const near = y + h > -NEAR && y < innerHeight + NEAR;
+      later.push(near ? '' : table(trs.slice(s, s + SEGMENT)));
+      html += `<div class="diff-segment" style="contain-intrinsic-size:auto ${h}px">${near ? table(trs.slice(s, s + SEGMENT)) : ''}</div>`;
+      y += h;
+    }
     this.body.innerHTML = `<div class="diff-table-wrap">${html}</div>`;
+    const segs = [...this.body.querySelectorAll('.diff-segment')];
+    const io = (this.segments = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          e.target.innerHTML = later[segs.indexOf(e.target)]!;
+          io.unobserve(e.target);
+        }
+      },
+      { rootMargin: `${NEAR}px 0px` },
+    ));
+    segs.forEach((seg, k) => later[k] && io.observe(seg));
   }
+
+  /** Fills in a long diff's tables as they come near the screen (see `paint`). */
+  segments?: IntersectionObserver;
 
   async highlight() {
     const f = this.f;
@@ -365,7 +425,7 @@ class App {
           if (!v.rendered) this.queueRender(v);
         }
       },
-      { rootMargin: '1200px 0px' },
+      { rootMargin: `${NEAR}px 0px` },
     );
     this.setManifest(src.manifest);
   }
@@ -394,10 +454,12 @@ class App {
     let dropped = 0;
     for (const [path, h] of Object.entries(this.reviewed)) if (hashes.get(path) !== h) (delete this.reviewed[path], dropped++);
     if (dropped) store.set(this.reviewedKey, this.reviewed);
+    for (const v of this.views.values()) v.segments?.disconnect();
     this.views.clear();
     this.forceLoad.clear();
     this.renderQueue.length = 0;
     this.reasons = [];
+    this.heights = [];
   }
 
   /** One shell per file, in one parse. Hiding and showing only flips `hidden`. */
@@ -405,7 +467,7 @@ class App {
     this.io.disconnect();
     this.peek = null;
     const reasons = this.files.map((f) => this.reasonFor(f));
-    this.el.list.innerHTML = this.files.map((f, i) => fileShellHtml(f, i, reasons[i] !== null, this.isReviewed(i))).join('');
+    this.el.list.innerHTML = this.files.map((_, i) => fileShellHtml(i, this.estimate(i), reasons[i] !== null, this.isReviewed(i))).join('');
     for (const el of this.el.list.children) this.io.observe(el);
     this.tree.setFiles(this.files.map((f, i) => ({ i, path: f.path, status: f.status, reviewed: this.isReviewed(i) })));
     this.renderFilterMenu();
@@ -498,6 +560,7 @@ class App {
     const out = (await res.json()) as (string | null)[];
     if (key !== this.m.key) return;
     missing.forEach((i, j) => this.src.patches.set(i, out[j] ?? null));
+    this.measureWhenIdle(missing);
   }
 
   /** Fetch the rest of the shown files' patches while the page is idle, so
@@ -565,7 +628,7 @@ class App {
         const next = this.renderQueue.shift()! as FileView & { repaint?: boolean };
         if (next.repaint) {
           next.repaint = false;
-          if (next.rendered) next.paint();
+          if (next.rendered) order.get(next)! > innerHeight ? this.renew(next) : next.paint();
         } else if (!next.rendered && this.reasons[next.i] === null) next.render();
       }
       if (this.renderQueue.length) requestAnimationFrame(step);
@@ -578,6 +641,72 @@ class App {
     const r = await fetch(`/api/file?key=${encodeURIComponent(this.m.key)}&side=${side}&path=${encodeURIComponent(path)}`);
     if (!r.ok) throw new Error(`could not load ${path}`);
     return r.text();
+  }
+
+  /** File `i`'s body heights before it renders, [unified, split]. */
+  estimate(i: number): number[] {
+    const f = this.files[i]!;
+    return this.heights[i] ?? [bodyEstimate(f, 'unified', this.live), bodyEstimate(f, 'split', this.live)];
+  }
+
+  /** Body heights measured from patches as they arrive: exact unless a
+   *  wrapped line breaks somewhere `screenLines` does not. A box that renders
+   *  taller or shorter than its estimate moves what is below it, and the
+   *  screen jumps when that is above. A box still waiting to render takes
+   *  them at once. */
+  private heights: number[][] = [];
+  measure(i: number) {
+    const patch = this.src.patches.get(i);
+    const f = this.files[i]!;
+    if (!patch || f.size > LARGE_PATCH || !this.viewW) return;
+    const exp = expandable(this.live, f);
+    const rows = buildRows(parsePatch(patch, false), exp, exp);
+    const max = maxLine(rows);
+    const px = (mode: DiffStyle) => rowHeights(rows, mode, this.cpl(max, mode)).reduce((a, b) => a + b, 0) || MESSAGE_PX;
+    this.heights[i] = [px('unified'), px('split')];
+    const shell = this.shell(i);
+    if (shell && !this.views.get(i)?.rendered) shell.style.cssText = sizeVars(this.heights[i]);
+  }
+
+  /** Files whose patches came in, to measure while the page is idle. */
+  private unmeasured = new Set<number>();
+  measureWhenIdle(ids: number[]) {
+    const idle = !this.unmeasured.size;
+    for (const i of ids) this.unmeasured.add(i);
+    if (!idle) return;
+    const step = (d: IdleDeadline) => {
+      for (const i of this.unmeasured) {
+        if (d.timeRemaining() <= 2) break;
+        this.unmeasured.delete(i);
+        this.measure(i);
+      }
+      if (this.unmeasured.size) requestIdleCallback(step);
+    };
+    requestIdleCallback(step);
+  }
+
+  /** The diff column's width, for `cpl`; 0 until measured. */
+  private viewW = 0;
+
+  /** Characters per screen line in a code cell, in a file whose last line is `maxLine`. */
+  cpl(maxLine: number, mode = this.diffStyle): number {
+    if (!this.viewW) return Infinity;
+    // Unified sits in a column at most 1100px wide; each file has a 1px border.
+    const code = (mode === 'split' ? this.viewW : Math.min(1100, this.viewW)) - 2 - 2 * numWidth(mode, maxLine);
+    // A code cell's padding is 22px + 10px (see .blob-code).
+    return Math.max(1, Math.floor(((mode === 'split' ? code / 2 : code) - 32) / CHAR_PX));
+  }
+
+  /** Repaint a file far from the screen by moving it into a new, empty box,
+   *  to render again when it comes near. A box that has been on screen keeps
+   *  that height while off screen, whatever its style says, and a new view
+   *  (split, unified) changes it (see .file for how boxes size themselves). */
+  renew(v: FileView) {
+    const el = v.el.cloneNode() as HTMLElement;
+    this.io.unobserve(v.el);
+    v.el.replaceWith(el);
+    v.attach(el);
+    this.io.observe(el);
   }
 
   /** File `i`'s box, filled in or not. Enough for geometry. */
@@ -1013,6 +1142,17 @@ class App {
     this.el.root.dataset.diffStyle = this.diffStyle;
     container.replaceChildren(this.el.root);
     this.renderHeader();
+    // The list's room, whichever view is on: .diff-view less its 16px
+    // padding. Lines wrap at it, so heights follow it. The first measure
+    // covers the patches already here: all of an export's, and any that beat it.
+    const view = this.el.list.parentElement!;
+    const remeasure = () => {
+      if (view.clientWidth - 32 === this.viewW) return;
+      this.viewW = view.clientWidth - 32;
+      this.measureWhenIdle([...this.src.patches.keys()]);
+    };
+    remeasure();
+    new ResizeObserver(remeasure).observe(view);
     this.el.list.addEventListener('click', (e) => this.onListClick(e));
     this.el.header.addEventListener('click', (e) => this.onChromeClick(e));
     this.tree.extra.addEventListener('change', (e) => {
