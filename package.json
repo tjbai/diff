@@ -10,9 +10,9 @@
     "server": "bun src/server.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "perf": "bun checks/perf.ts",
-    "check": "tsc --noEmit && bun test && bun checks/bundle.ts && bun checks/perf.ts",
-    "ratchet": "bun checks/bundle.ts --ratchet && bun checks/perf.ts --ratchet"
+    "perf": "bun checks/perf.ts && bun checks/perf.ts --fixture deletions",
+    "check": "tsc --noEmit && bun test && bun checks/bundle.ts && bun run perf",
+    "ratchet": "bun checks/bundle.ts --ratchet && bun checks/perf.ts --ratchet && bun checks/perf.ts --fixture deletions --ratchet"
   },
   "devDependencies": {
     "@types/bun": "latest",

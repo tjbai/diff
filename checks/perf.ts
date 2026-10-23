@@ -6,12 +6,13 @@
 //   bun checks/perf.ts                 the synthetic fixture, against budgets
 //   bun checks/perf.ts --ratchet       same, then lower budgets that have room
 //   bun checks/perf.ts owner/repo#N    a real PR from ~/.cache/prv, report only
+//   --fixture deletions  another fixture (checks/fixture.ts), with its own budgets
 //   --runs N (default 5)  --headed  --json
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { firefox, type Browser, type Locator, type Page } from 'playwright-core';
-import { fixture } from './fixture.ts';
+import { FIXTURES } from './fixture.ts';
 import { BUDGET_FILE, readBudget, ratchet, report, writeBudget, type Metrics } from './budget.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -20,6 +21,10 @@ const flag = (f: string) => args.includes(f);
 const opt = (f: string) => (args.includes(f) ? args[args.indexOf(f) + 1] : undefined);
 const RUNS = Number(opt('--runs') ?? 5);
 const target = args.find((a) => /^[\w.-]+\/[\w.-]+#\d+$/.test(a));
+const FIXTURE = opt('--fixture') ?? 'mega';
+if (!FIXTURES[FIXTURE]) throw new Error(`perf: no fixture ${FIXTURE}; one of ${Object.keys(FIXTURES).join(', ')}`);
+/** Each fixture's budgets; the first one's kept their name. */
+const SECTION = FIXTURE === 'mega' ? 'perf' : `perf ${FIXTURE}`;
 
 // ------------------------------------------------------------ the PR to serve
 
@@ -33,14 +38,14 @@ if (target) {
   process.env.PRV_CACHE = cache;
   const { writeDiff, writePointer } = await import('../src/github.ts');
   const { splitPatch } = await import('../src/patch.ts');
-  const fx = fixture();
+  const fx = FIXTURES[FIXTURE]!();
   const { files, sections } = splitPatch(fx.patch);
   const [baseSha, headSha] = ['a'.repeat(40), 'b'.repeat(40)];
   const key = `${baseSha}..${headSha}`;
   await writeDiff(fx.owner, fx.repo, key, files, sections);
   const meta = {
     owner: fx.owner, repo: fx.repo, number: fx.number, title: fx.title, state: 'open' as const, author: 'perf',
-    url: '', baseRef: 'main', headRef: 'perf/fixture', commits: 42,
+    url: '', baseRef: 'main', headRef: `perf/${FIXTURE}`, commits: 42,
   };
   await writePointer({ meta, key, baseSha, headSha, checkedAt: 0 });
   pr = fx;
@@ -68,10 +73,25 @@ function probe() {
   type View = { rendered: boolean; tokens: unknown; f: { lang: string }; parsed: { hunks: unknown[] } | null; el: HTMLElement };
   type App = { views: Map<number, View>; renderQueue: View[] };
   const w = window as unknown as {
-    __perf: { frames: number[]; events: { name: string; start: number; dur: number }[]; highlighted?: number };
+    __perf: { frames: number[]; events: { name: string; start: number; dur: number }[]; highlighted?: number; shifts: number; tracking: boolean };
     __prvApp?: App;
   };
-  w.__perf = { frames: [], events: [] };
+  w.__perf = { frames: [], events: [], shifts: 0, tracking: false };
+  // Layout shifts: frames where code on screen moved in the page because
+  // something above it changed height, like a box that rendered taller than
+  // the room it held. Scrolling moves the screen, not the page, so it
+  // doesn't count, smooth or not, and neither does the browser's scroll
+  // anchoring, which hides some shifts and not others.
+  let anchors: [Element, number][] = [];
+  const pageTop = (el: Element) => el.getBoundingClientRect().top + scrollY;
+  const shifted = () => {
+    if (anchors.some(([el, y]) => el.isConnected && Math.abs(pageTop(el) - y) >= 1)) w.__perf.shifts++;
+    anchors = [];
+    for (const f of [0.3, 0.6, 0.9]) {
+      const el = document.elementFromPoint(900, innerHeight * f)?.closest('tr, .file');
+      if (el) anchors.push([el, pageTop(el)]);
+    }
+  };
   // The first frame where every code file on screen has its syntax colors.
   const highlighted = (app: App) => {
     const shown = [...app.views.values()].filter((v) => v.rendered && v.f.lang !== 'text' && v.parsed?.hunks.length && v.el.getBoundingClientRect().top < innerHeight);
@@ -79,6 +99,8 @@ function probe() {
   };
   const tick = (t: number) => {
     w.__perf.frames.push(t);
+    if (w.__perf.tracking) shifted();
+    else anchors = [];
     if (!w.__perf.highlighted && w.__prvApp && highlighted(w.__prvApp)) w.__perf.highlighted = t;
     requestAnimationFrame(tick);
   };
@@ -127,6 +149,17 @@ async function frames(page: Page, from: number, to = Infinity) {
 }
 
 const now = (page: Page) => page.evaluate(() => performance.now());
+
+/** Count layout shifts (see `probe`) from here until told to stop. */
+const tracking = (page: Page, on: boolean) => page.evaluate((on) => ((window as unknown as { __perf: { tracking: boolean } }).__perf.tracking = on), on);
+
+/** Wheel through the diff, as a person would, `n` notches of `dy`. */
+async function wheel(page: Page, n: number, dy: number) {
+  for (let i = 0; i < n; i++) {
+    await page.mouse.wheel(0, dy);
+    await page.waitForTimeout(16);
+  }
+}
 
 /** Where to click `l`, resolved up front so Playwright's own checks don't count against the app. */
 async function center(l: Locator): Promise<[number, number]> {
@@ -245,11 +278,9 @@ async function run(browser: Browser, emptyBodies = false): Promise<Metrics> {
     requestAnimationFrame(tick);
     return s;
   });
+  await tracking(page, true);
   const t0 = await now(page);
-  for (let i = 0; i < 120; i++) {
-    await page.mouse.wheel(0, 250);
-    await page.waitForTimeout(16);
-  }
+  await wheel(page, 120, 250);
   const t1 = await now(page);
   const sf = await frames(page, t0, t1);
   const bs = await blank.evaluate((s) => ((s.on = false), s));
@@ -296,6 +327,10 @@ async function run(browser: Browser, emptyBodies = false): Promise<Metrics> {
   }
   out['teleport.toContent ms'] = worst;
   out['teleport.blocking ms'] = tb;
+  // Back up from there, into files that have not rendered yet.
+  await page.mouse.move(900, 500);
+  await wheel(page, 60, -250);
+  await settle(page, 500);
 
   // j / k between files.
   worst = 0;
@@ -321,6 +356,7 @@ async function run(browser: Browser, emptyBodies = false): Promise<Metrics> {
   }
   out['treeJump.input ms'] = worst;
   out['treeJump.blocking ms'] = jb;
+  await tracking(page, false);
 
   // Mark reviewed (collapses and moves to the next file).
   worst = 0;
@@ -352,6 +388,12 @@ async function run(browser: Browser, emptyBodies = false): Promise<Metrics> {
   out['split.input ms'] = r.input;
   out['split.blocking ms'] = r.blocking;
   await checkColors(page, 'split');
+  // Back up through files laid out for the other view.
+  await page.mouse.move(900, 500);
+  await tracking(page, true);
+  await wheel(page, 60, -250);
+  await settle(page, 500);
+  out['layout.shifts'] = await page.evaluate(() => (window as unknown as { __perf: { shifts: number } }).__perf.shifts);
 
   await ctx.close();
   return out;
@@ -390,9 +432,9 @@ try {
     for (const [k, v] of Object.entries(measured)) console.log(`${k.padEnd(28)} ${v}  (${runs.map((r) => r[k] ?? '').join(' ')})`);
   } else {
     const budget = readBudget();
-    const failures = report('perf', measured, budget.perf);
+    const failures = report('perf', measured, budget[SECTION]);
     if (flag('--ratchet')) {
-      budget.perf = ratchet(measured, budget.perf);
+      budget[SECTION] = ratchet(measured, budget[SECTION]);
       writeBudget(budget);
       console.log(`ratcheted ${BUDGET_FILE}`);
     } else if (failures) {

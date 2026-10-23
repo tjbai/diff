@@ -31,6 +31,34 @@
     "category.blocking ms": 10,
     "treeFilter.input ms": 30,
     "split.input ms": 30,
-    "split.blocking ms": 75
+    "split.blocking ms": 75,
+    "layout.shifts": 0
+  },
+  "perf deletions": {
+    "bytes.html": 41600,
+    "bytes.manifest": 97200,
+    "load.firstPaint ms": 95,
+    "load.fcp ms": 50,
+    "load.highlighted ms": 135,
+    "load.settled ms": 95,
+    "load.blocking ms": 10,
+    "load.longestFrame ms": 35,
+    "load.domNodes": 6200,
+    "scroll.longestFrame ms": 35,
+    "scroll.blocking ms": 10,
+    "scroll.blankFrames %": 4,
+    "teleport.toContent ms": 75,
+    "teleport.blocking ms": 10,
+    "next.input ms": 30,
+    "next.blocking ms": 10,
+    "treeJump.input ms": 30,
+    "treeJump.blocking ms": 10,
+    "review.input ms": 30,
+    "category.input ms": 30,
+    "category.blocking ms": 10,
+    "treeFilter.input ms": 30,
+    "split.input ms": 30,
+    "split.blocking ms": 10,
+    "layout.shifts": 0
   }
 }

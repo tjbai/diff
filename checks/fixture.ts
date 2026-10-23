@@ -129,3 +129,45 @@ export function fixture(): Fixture {
   sections.push(added('pnpm-lock.yaml', YAML, 12000));
   return { owner: 'perf', repo: 'fixture', number: 1, title: 'synthetic: `plan_turn` mega-PR (perf fixture)', patch: sections.join('') };
 }
+
+/** Lines in a file whose median is `median`, with a long tail: lognormal, 90th
+ *  percentile at 4.5× the median. */
+const tail = (median: number, max: number) => {
+  const z = Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+  return Math.max(1, Math.min(max, Math.round(median * Math.exp(1.17 * z))));
+};
+
+/** Python with the odd line too long for the screen, so some rows wrap. */
+const PY_LONG = [...PY, ...PY, ...PY, () => `    ${pick(WORDS)} = "${words(int(25, 45))}"`];
+
+/** A feature torn out: ~500 files, 400 of them deleted whole (~67k lines,
+ *  mostly Python and its tests, up to a 2,200-line one), the rest small
+ *  edits that unhook it. Shaped after a real PR where boxes sized by guesswork made the page
+ *  jump as files rendered above the screen. */
+export function deletions(): Fixture {
+  seed = 0x2545f491;
+  const sections: string[] = [];
+  const used = new Set<string>();
+  const unique = (make: () => string) => {
+    for (;;) {
+      const p = make();
+      if (!used.has(p)) return (used.add(p), p);
+    }
+  };
+  const dirs = ['wiki', 'wiki/gen', 'wiki/gen/adapters', 'wiki/runs', 'wiki/store', 'wiki/sandbox', 'wiki/eval'];
+  const gone = (ext: string) => unique(() => `services/delivery/${pick(dirs)}/${pick(WORDS)}_${pick(WORDS)}.${ext}`);
+  sections.push(deleted(gone('py'), PY_LONG, 2205));
+  for (let i = 0; i < 240; i++) sections.push(deleted(gone('py'), PY_LONG, tail(85, 1500)));
+  for (let i = 0; i < 60; i++) sections.push(deleted(unique(() => `services/delivery/tests/wiki/test_${pick(WORDS)}_${pick(WORDS)}.py`), PY_LONG, tail(85, 1500)));
+  for (let i = 0; i < 40; i++) sections.push(deleted(gone('md'), MD, tail(85, 800)));
+  for (let i = 0; i < 40; i++) sections.push(deleted(gone('yaml'), YAML, tail(85, 800)));
+  for (let i = 0; i < 31; i++) sections.push(deleted(gone('json'), JSONL, tail(85, 800)));
+  const pkgs = ['api', 'web', 'temporal', 'infra', 'tasks'];
+  for (let i = 0; i < 30; i++) sections.push(modified(unique(() => `services/${pick(pkgs)}/${pick(WORDS)}/${pick(WORDS)}_${pick(WORDS)}.py`), PY_LONG, tail(5, 260)));
+  for (let i = 0; i < 30; i++) sections.push(modified(unique(() => `docs/${pick(WORDS)}/${pick(WORDS)}-${pick(WORDS)}.md`), MD, tail(5, 260)));
+  for (let i = 0; i < 20; i++) sections.push(modified(unique(() => `packages/${pick(pkgs)}/src/${pick(WORDS)}-${pick(WORDS)}.ts`), TS, tail(5, 260)));
+  for (let i = 0; i < 14; i++) sections.push(modified(unique(() => `infra/${pick(pkgs)}/${pick(WORDS)}.yaml`), YAML, tail(5, 260)));
+  return { owner: 'perf', repo: 'deletions', number: 1, title: 'synthetic: delete `delivery_wiki` (perf fixture)', patch: sections.join('') };
+}
+
+export const FIXTURES: Record<string, () => Fixture> = { mega: fixture, deletions };

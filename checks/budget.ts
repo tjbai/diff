@@ -8,7 +8,9 @@ import { join } from 'node:path';
 export type Metrics = Record<string, number>;
 export interface Budget {
   bundle: Metrics;
+  /** The mega fixture's; the others' are under `perf <fixture>`. */
   perf: Metrics;
+  [section: string]: Metrics;
 }
 
 export const BUDGET_FILE = join(import.meta.dir, 'budget.json');
