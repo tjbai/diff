@@ -27,6 +27,10 @@ test('classify returns every matching category in catalog order', () => {
   expect(f('sapiens/tests/cases/AGENTS.md')).toEqual(['tests', 'agents', 'docs']);
   expect(f('pnpm-lock.yaml')).toEqual(['generated']);
   expect(f('src/app.ts')).toEqual([]);
+  expect(f('temporal/src/temporal/agent/transcript/history.py')).toEqual([]);
+  expect(f('HISTORY.rst')).toEqual(['docs']);
+  expect(f('LICENSE')).toEqual(['docs']);
+  expect(f('docs/conf.py')).toEqual(['docs']);
   expect(f('src/app.ts', { kinds: ['whitespace'] })).toEqual(['trivial']);
 });
 

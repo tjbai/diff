@@ -1,6 +1,6 @@
 // Geld's hiding model: glob compiler (ports of Geld's `be`/`xe`/`Se`/`Ce`),
 // the default catalog, and per-file classification.
-import { CATALOG } from './geld-catalog.ts';
+import { CATALOG, SOURCE_EXTENSIONS } from './geld-catalog.ts';
 
 export type CategoryId = (typeof CATALOG.categories)[number]['id'];
 export const CATEGORIES = CATALOG.categories.map((c) => ({
@@ -116,10 +116,17 @@ function normalizePath(p: string): string {
   return p.replace(/\\/g, '/').replace(/^\.?\//, '');
 }
 
+// Geld's Docs name globs (`HISTORY*`, `CHANGES*`, `LICENSE*`, ...) match any
+// case, so they also claim code like `transcript/history.py`. Here a source
+// file is Docs only by directory (`docs/`), never by name.
+const SOURCE = compileGlob(`*.${SOURCE_EXTENSIONS}`);
+
 const COMPILED = CATALOG.categories.map((c) => ({
   id: c.id as CategoryId,
   kindGroups: KIND_CATEGORIES.has(c.id) ? new Set(c.groups.map((g) => g.id)) : null,
-  patterns: c.groups.flatMap((g) => g.patterns).map((p) => ({ pattern: p, re: compileGlob(p) })),
+  patterns: c.groups
+    .flatMap((g) => g.patterns)
+    .map((p) => ({ pattern: p, re: compileGlob(p), notSource: c.id === 'docs' && !p.includes('/') })),
 }));
 
 export interface ClassifyInput {
@@ -135,9 +142,10 @@ export function classify(file: ClassifyInput): CategoryId[] {
   const path = normalizePath(file.path);
   const kinds = new Set(file.kinds ?? []);
   if (file.additions + file.deletions >= LARGE_THRESHOLD) kinds.add('large');
+  const source = SOURCE.test(path);
   const out: CategoryId[] = [];
   for (const c of COMPILED) {
-    if (c.patterns.some((p) => p.re.test(path))) out.push(c.id);
+    if (c.patterns.some((p) => p.re.test(path) && !(p.notSource && source))) out.push(c.id);
     else if (c.kindGroups && [...kinds].some((k) => c.kindGroups!.has(k))) out.push(c.id);
   }
   return out;
