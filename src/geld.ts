@@ -2,8 +2,19 @@
 // the default catalog, and per-file classification.
 import { CATALOG, SOURCE_EXTENSIONS } from './geld-catalog.ts';
 
+// Geld's catalog, plus one category of our own after Trivial: files whose
+// every changed line is an import (see imports.ts).
+const IMPORTS = {
+  id: 'imports',
+  title: 'Import-only changes',
+  description: 'Every changed line is an import, as when a module moves.',
+  defaultEnabled: false,
+  groups: [{ id: 'imports', label: 'Import-only edits', patterns: [] as string[] }],
+};
+const ALL = CATALOG.categories.flatMap((c) => (c.id === 'trivial' ? [c, IMPORTS] : [c]));
+
 export type CategoryId = (typeof CATALOG.categories)[number]['id'];
-export const CATEGORIES = CATALOG.categories.map((c) => ({
+export const CATEGORIES = ALL.map((c) => ({
   id: c.id as CategoryId,
   title: c.title,
   description: c.description,
@@ -12,7 +23,7 @@ export const CATEGORIES = CATALOG.categories.map((c) => ({
 }));
 
 // Kind-based categories: their groups are matched against change kinds, not paths.
-const KIND_CATEGORIES = new Set(['trivial', 'large']);
+const KIND_CATEGORIES = new Set(['trivial', 'imports', 'large']);
 export const LARGE_THRESHOLD = 1000;
 
 function splitTopLevel(e: string): string[] {
@@ -121,7 +132,7 @@ function normalizePath(p: string): string {
 // file is Docs only by directory (`docs/`), never by name.
 const SOURCE = compileGlob(`*.${SOURCE_EXTENSIONS}`);
 
-const COMPILED = CATALOG.categories.map((c) => ({
+const COMPILED = ALL.map((c) => ({
   id: c.id as CategoryId,
   kindGroups: KIND_CATEGORIES.has(c.id) ? new Set(c.groups.map((g) => g.id)) : null,
   patterns: c.groups

@@ -3,6 +3,7 @@
 import { getFiletypeFromFileName } from '@pierre/diffs';
 import { classify, type CategoryId } from './geld.ts';
 import { scanPatch } from './geld-scan.ts';
+import { importOnly } from './imports.ts';
 
 export interface FileEntry {
   path: string;
@@ -10,7 +11,7 @@ export interface FileEntry {
   status: 'added' | 'deleted' | 'modified' | 'renamed';
   additions: number;
   deletions: number;
-  /** Geld trivial kinds (renames, modes, binary, deleted, whitespace, comments). */
+  /** Geld trivial kinds (renames, modes, binary, deleted, whitespace, comments), and `imports`. */
   kinds?: string[];
   /** Every Geld category the file belongs to, in catalog order. */
   cats: CategoryId[];
@@ -71,6 +72,9 @@ export function splitPatch(patch: string): SplitPatch {
   const rows = sections.map((s, i) => {
     const text = patch.slice(s.start, s.end);
     const scan = scanned[i]!;
+    if ((scan.status === 'modified' || scan.status === 'renamed') && importOnly(text, scan.path)) {
+      scan.kinds = [...(scan.kinds ?? []), 'imports'];
+    }
     const entry: FileEntry = {
       path: scan.path,
       status: scan.status,

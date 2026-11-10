@@ -41,6 +41,38 @@ test('splitPatch keeps each section with its own stats and kinds', () => {
   expect(sections[2]!.includes('a/src/a.ts')).toBe(false);
 });
 
+test('splitPatch marks files whose every changed line is an import', () => {
+  const file = (path: string, head: string[], body: string[]) => [`diff --git a/${path} b/${path}`, ...head, `--- a/${path}`, `+++ b/${path}`, ...body];
+  const patch = [
+    // Inside a multi-line import that opened before the hunk: git names it in the header.
+    ...file('a.py', ['index 1..2 100644'], ['@@ -10,3 +10,3 @@ from pkg.mod import (', '     x,', '-    old_name,', '+    new_name,', ' )']),
+    // The same lines inside a call are code.
+    ...file('b.py', ['index 1..2 100644'], ['@@ -10,3 +10,3 @@ def f(', '     x,', '-    old_name,', '+    new_name,', ' )']),
+    // The import block closes in the context, so the next changed line is code.
+    ...file('c.py', ['index 1..2 100644'], ['@@ -10,4 +10,4 @@ from pkg.mod import (', '     x,', ' )', '-y = 1', '+y = 2']),
+    ...file('d.ts', ['index 1..2 100644'], [
+      '@@ -1,6 +1,6 @@',
+      ' import {',
+      '   a,',
+      "-} from './old';",
+      "+} from './new';",
+      "-import b from 'b';",
+      "+import type { b } from 'b';",
+      ' ',
+      ' const x = 1;',
+    ]),
+    ...file('e.ts', ['index 1..2 100644'], ['@@ -1,2 +1,2 @@', "-import a from 'a';", "+import a from 'b';", '-a();', '+a(1);']),
+    // A comment that names the new path is not an import.
+    ...file('f.py', ['index 1..2 100644'], ['@@ -1,2 +1,2 @@', '-# see old.mod', '+# see new.mod', '-import old.mod', '+import new.mod']),
+    // A new file of imports is new code to read.
+    ...file('g.py', ['new file mode 100644', 'index 0..2'], ['@@ -0,0 +1 @@', '+import os']),
+    '',
+  ].join('\n');
+  const { files } = splitPatch(patch);
+  const imports = files.filter((f) => f.kinds?.includes('imports') && f.cats.includes('imports')).map((f) => f.path);
+  expect(imports).toEqual(['a.py', 'd.ts']);
+});
+
 test('patchDocs highlights each hunk on its own so a cut-off string cannot leak', () => {
   const patch = [
     '@@ -1,2 +1,2 @@',

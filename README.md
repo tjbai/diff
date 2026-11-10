@@ -38,6 +38,7 @@ the eye button next to "filter files…" is one checklist w/ counts:
 
 - manual: files you hid with the eye button on a file header, or `h` (`h` again on one brings it back). saved per PR. uncheck it to see them all again.
 - geld's categories. tests, agent config, and docs are hidden by default.
+- import-only changes: modified or moved files where every changed line is an import (or blank), like the files that just follow a module move. off by default. a multi-line import that opens above the hunk counts through git's hunk header, and anything ambiguous stays shown.
 
 the checklist itself is a global setting.
 

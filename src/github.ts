@@ -128,7 +128,7 @@ const baseRefName = (ref: string) => `refs/prv/heads/${ref}`;
 
 const prDir = (owner: string, repo: string) => join(CACHE_ROOT, owner, `${repo}.prv`);
 // Bump when the cached per-file format or ordering changes.
-const CACHE_FORMAT = 5;
+const CACHE_FORMAT = 6;
 const diffDir = (owner: string, repo: string) => join(prDir(owner, repo), `diffs-v${CACHE_FORMAT}`);
 const diffPath = (owner: string, repo: string, key: string) => join(diffDir(owner, repo), key.replace('..', '_'));
 
